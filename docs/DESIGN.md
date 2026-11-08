@@ -171,11 +171,20 @@ Stack frame syntax differs between versions, so the parser accepts both forms:
 | `<Type>Exception: msg` followed by frames | **Exception** |
 | `[Licensing::*] …` and its indented continuation lines | **Licensing**, folded into one entry |
 | `[Package Manager] …` | **PackageManager** |
-| `Asset Pipeline Refresh (id=…): Total: X seconds - Initiated by …` | **AssetRefresh** section and metric |
+| `Asset Pipeline Refresh (id=…): Total: X seconds - Initiated by …` | **AssetPipeline** entry ("Asset refresh took 3.53 s (initiated by …)") and metric. It is not a section, because Unity only prints this line once the refresh has finished. |
 | `Begin MonoManager ReloadAssembly` … `Domain Reload Profiling: Nms` | **DomainReload** section and metric; the profiling tree is folded |
-| `Starting: …ScriptCompilationBuildProgram…` / Bee output | **Compile** section |
+| `[ScriptCompilation] Requested…` or `Starting: …bee_backend…` … `*** Tundra build success/failed (X seconds)` | **Compile** section and metric; Bee progress lines are folded; a failed build is an Error |
 | `Reloading assemblies for play mode.` | starts a **PlayMode #n** section |
-| First lines: `Built from…`, `OS:`, `Physical Memory`, `Date:` | **Facts** for the info card |
+| `Loaded scene 'Temp/__Backupscenes/…'` | Unity loads the backup scene **twice** per play session. The 1st load is the play scene being loaded; the 2nd is the exit, which closes the section. With Enter Play Mode Options (no domain reload) there is no "Reloading assemblies" line, so the 1st load is what starts the session. |
+| `Loaded scene 'X'` + `Total Operation Time: N ms` | **SceneLoad** entry and metric |
+| `Unloading N unused Assets / (size). Loaded Objects now: M.` | **Memory** entry and metrics |
+| `[Project] Loading completed in X seconds` | closes **Startup** with its duration |
+| `Cleanup mono` / `Input System … ShutdownInProgress` | closes everything and opens **Shutdown** |
+| First lines: `Built from…`, `OS:`, `Physical Memory`, `Date:`, `Successfully changed project path to:`, the `Direct3D:` block | **Facts** for the info card |
+
+**Fold groups:** consecutive lines that share a prefix (`[Licensing::*]`, `[Package Manager]`, Bee output, Mono reload chatter, `[Tag] …`) merge into one entry, and indented lines become details of the entry above them. This turns 4,195 real lines into about 255 entries.
+
+**Known limit:** a `Debug.Log` message is the single line right above its stack trace. If a message has several lines, only its last line becomes the entry's message; the earlier lines become entries of their own.
 
 ### 4.2 Player.log
 
@@ -190,7 +199,8 @@ Stack frame syntax differs between versions, so the parser accepts both forms:
 | `Crash!!!`, `========== OUTPUTTING STACK TRACE ==========`, `Received signal`, `Uploading Crash Report` | **Crash** section; native frames are kept and the last N lines before the crash are highlighted |
 
 ### 4.3 Stack trace readability
-- Classify each frame as **User** (`Assets/`), **Package** (`Packages/`, `Library/PackageCache`), **Engine** (`UnityEngine.*`, `UnityEditor.*`, `System.*`) or **Native**.
+- Classify each frame as **User** (`Assets/`), **Package** (`Packages/`, `Library/PackageCache`, and `Assets/Plugins/`, which usually holds third-party code), **Engine** (`UnityEngine.*`, `UnityEditor.*`, `System.*`) or **Native**. Frames without a path (release builds) are classified by namespace.
+- Make compiler-generated names readable: `Foo/<Run>d__4:MoveNext` → `Foo.Run() [async]`, `Foo/<>c:<Start>b__0_0` → `Foo.Start() [lambda]`.
 - Show user frames in bold, fold engine frames into "▸ 6 engine frames", and drop the logging plumbing frames.
 - Clean the signature: `SpiritCabinet.Installers.GameInstaller:Report (SpiritCabinet.Text.Import.TextData)` becomes `GameInstaller.Report(TextData)`, with the full namespace in a tooltip.
 - The **culprit** is the first user frame. It appears on the entry row as `GameInstaller.cs:84`.
@@ -329,7 +339,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 |---|---|---|
 | M0 | Scaffold: Cargo project, git init, design | Builds and opens in RustRover ✅ |
 | M1 | Workspace split, `comte-core` model and traits | Core types compile and are tested ✅ |
-| M2 | Unity Editor parser with timeline sections and frame classification | Snapshot tests cover §4.1 and §4.3 |
+| M2 | Unity Editor parser with timeline sections and frame classification | Snapshot tests cover §4.1 and §4.3 ✅ |
 | M3 | Unity Player parser (crash, device facts, exceptions, scene/memory) | Snapshot tests cover §4.2 |
 | M4 | Locator, Player discovery and file-kind detection | Lists the real logs on this machine |
 | M5 | GUI viewer: sources, sections, list, filters, search, details, collapse, noise toggle | `Editor.log` reads clearly |
@@ -349,7 +359,12 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 - **The assistant never commits.** Each task ends with a suggested [Conventional Commits](https://www.conventionalcommits.org/) message.
 - Real logs never go into the repo. Fixtures are trimmed and redacted, and `samples/private/` is git-ignored.
 
-## 13. Open questions (for later)
+## 13. Notes for later milestones
+- **M5 noise:** most engine lines in an Editor log are Info entries in categories such as System, Other and DomainReload. Besides hiding the noise categories, the "Show engine noise" toggle should also hide Info entries that are not UserLog.
+- **M6 redaction:** the real Editor log's `COMMAND LINE ARGUMENTS` block contains the full `-accessToken` value and `-hubSessionId`, so redaction must cover them.
+- **Compile metric:** this comes from Tundra's own duration. It can differ from the separate `AssetDatabase: script compilation time` line, which Unity sometimes prints before the compile starts.
+
+## 14. Open questions (for later)
 - macOS and Linux support after v1?
 - Should saved sessions have a library view with search across them by tag?
 - Unreal or Godot next?

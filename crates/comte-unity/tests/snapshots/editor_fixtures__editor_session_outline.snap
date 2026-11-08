@@ -1,0 +1,124 @@
+---
+source: crates/comte-unity/tests/editor_fixtures.rs
+expression: outline(&doc)
+---
+== facts
+  Engine version: 6000.3.11f1  (L2)
+  OS: Windows 11 (10.0.26200) CoreSingleLanguage  (L4)
+  Memory: 32600 MB  (L4)
+  Started: 2026-11-05T17:59:24Z  (L8)
+  Project: C:\Users\dev\Projects\Sample Game  (L27)
+  Graphics API: Direct3D 12 [level 12.2]  (L40)
+  GPU: NVIDIA GeForce RTX 2070 Super  (L41)
+  VRAM: 7989 MB  (L43)
+  GPU driver: 32.0.16.1692  (L45)
+== metrics
+  Domain reload: 1.30 s  (L55)
+  Script compilation: 120 ms  (L76)
+  Domain reload: 1.82 s  (L81)
+  Asset refresh: 3.53 s  (L84)
+  Unused assets unloaded: 1579  (L89)
+  Loaded objects: 2181  (L89)
+  Startup: 9.88 s  (L95)
+  Asset refresh: 6 ms  (L102)
+  Scene load: 205 ms  (L108)
+  Domain reload: 2.50 s  (L114)
+  Scene load: 412 ms  (L119)
+  Scene load: 23 ms  (L188)
+  Unused assets unloaded: 3  (L189)
+  Loaded objects: 3678  (L189)
+  Script compilation: 14.60 s  (L202)
+== timeline  (222 lines, 61 entries, 5 errors, 2 warnings)
+▾ Startup [L1-97] 9.88 s  errors=0 warnings=1
+  · [Licensing] L1-1 [Licensing::Module] Trying to connect to existing licensing client channel... (noise)
+  · [System] L2-2 Built from '6000.3/staging' branch; Version is '6000.3.11f1 (3000ef702840) revision 314596…
+  · [Licensing] L3-3 [Licensing::IpcConnector] Successfully connected to: "LicenseClient-dev" at "2026-11-05T17… (noise)
+  · [System] L4-8 OS: 'Windows 11  (10.0.26200) CoreSingleLanguage' Language: 'en' Physical Memory: 32600 MB  +4 lines
+  · [Licensing] L9-18 [Licensing::Client] Handshaking with LicensingClient:  +9 lines (noise)
+  · [System] L20-26 Command line arguments  +6 lines
+  · [System] L27-27 Successfully changed project path to: C:\Users\dev\Projects\Sample Game
+  · [Other] L28-28 C:/Users/dev/Projects/Sample Game
+  · [Memory] L29-31 [UnityMemory] Configuration Parameters - Can be set up in boot.config  +2 lines (noise)
+  · [Input] L32-32 Input System module state changed to: Initialized. (noise)
+  · [System] L33-33 [Physics::Module] Initialized fallback backend.
+  · [Package Manager] L34-34 [Package Manager] Connected to IPC stream "Upm-19228" after 0.4 seconds. (noise)
+  · [System] L35-35 Initialize engine version: 6000.3.11f1 (3000ef702840)
+  · [Graphics] L36-38 [D3D12 Device Filter] Vendor Name: NVIDIA  +2 lines
+  · [Graphics] L39-45 Graphics: Direct3D 12 [level 12.2] on NVIDIA GeForce RTX 2070 Super  +6 lines
+  · [Domain reload] L46-48 Initialize mono  +2 lines
+  ▾ Domain reload [L49-59] 1.30 s  errors=0 warnings=0
+    · [Domain reload] L50-54 Registering precompiled unity dll's ...  +4 lines
+    · [Domain reload] L55-59 Domain reload took 1.30 s  +4 lines
+  · [Asset pipeline] L60-60 Application.AssetDatabase Initial Refresh Start
+  · [Package Manager] L61-67 [Package Manager] Restoring resolved packages state from cache  +6 lines (noise)
+  ▾ Script compilation [L68-76] 120 ms  errors=0 warnings=1
+    · [Build] L68-71 Starting: C:\Program Files\Unity\Hub\Editor\6000.3.11f1\Editor\Data\Tools\BuildPipeline\be…  +3 lines
+    · [Build] L72-74 Starting: C:\Program Files\Unity\Hub\Editor\6000.3.11f1\Editor\Data\Tools\BuildPipeline\be…  +2 lines
+    ⚠ [Compiler] L75-75 CS0618: 'WWW' is obsolete: 'Use UnityWebRequest, a fully featured replacement which is mor…  @ OldLoader.cs:14
+    · [Build] L76-76 Script compilation finished in 120 ms
+  · [Build] L77-77 AssetDatabase: script compilation time: 1.296285s
+  ▾ Domain reload [L78-83] 1.82 s  errors=0 warnings=0
+    · [Domain reload] L79-80 - Loaded All Assemblies, in  0.734 seconds  +1 lines
+    · [Domain reload] L81-83 Domain reload took 1.82 s  +2 lines
+  · [Asset pipeline] L84-87 Asset refresh took 3.53 s (initiated by InitialRefreshV2(ForceSynchronousImport))  +3 lines
+  · [Memory] L88-88 Unloading 16 Unused Serialized files (Serialized files now loaded: 0) (noise)
+  · [Memory] L89-91 Unloaded 1579 unused assets (2.9 MB); 2181 objects still loaded  +2 lines (noise)
+  · [Input] L93-94 <RI> Initializing input.  +1 lines (noise)
+  · [System] L95-97 Project loaded in 9.88 s  +2 lines
+⛔ [Exception] L98-101 UnityConnectWebRequestException: Token Exchange failed due a failure with the web request.
+    eng  TokenExchange.VerifyTokenExchangeResponse(UnityWebRequest)
+    eng  UnitySynchronizationContext.ExecuteTasks()
+· [Asset pipeline] L102-102 Asset refresh took 6 ms (initiated by RefreshV2(AllowForceSynchronousImport))
+· [Scene load] L103-103 Opening scene Boot.unity
+· [Memory] L104-104 Unloading 135 Unused Serialized files (Serialized files now loaded: 0) (noise)
+· [Scene load] L105-108 Loaded scene Boot.unity in 205 ms  +3 lines
+▾ Play mode #1 [L109-188]  errors=2 warnings=1
+  · [Play mode] L109-109 Entering play mode (#1)
+  · [Domain reload] L110-110 Reloading assemblies after forced synchronous recompile.
+  ▾ Domain reload [L111-116] 2.50 s  errors=0 warnings=0
+    · [Domain reload] L112-113 - Loaded All Assemblies, in  0.705 seconds  +1 lines
+    · [Domain reload] L114-116 Domain reload took 2.50 s  +2 lines
+  · [Play mode] L117-119 Play mode #1 scene loaded in 412 ms  +2 lines
+  ⚠ [User log] L120-131 [Text] Draft text is allowed: 558 unreviewed fragments are in use. Development only.  @ GameInstaller.cs:84
+      USER GameInstaller.Report(TextData)  (Assets/Scripts/Installers/GameInstaller.cs:84)
+      USER GameInstaller.InstallBindings()  (Assets/Scripts/Installers/GameInstaller.cs:31)
+      pkg  MonoInstaller.InstallBindings()  (Assets/Plugins/Zenject/Source/Install/MonoInstaller.cs:20)
+  · [User log] L133-144 [Flow] Boot -> MainMenu  @ FlowTrace.cs:26
+      USER FlowTrace.Log(string)  (Assets/Scripts/Flow/FlowTrace.cs:26)
+      USER GameRunner.Run() [async]  (Assets/Scripts/Flow/GameRunner.cs:52)
+      eng  SetupCoroutine.InvokeMoveNext(IEnumerator, intptr)
+  · [User log] L146-157 [Flow] MainMenu -> Week  @ FlowTrace.cs:26
+      USER FlowTrace.Log(string)  (Assets/Scripts/Flow/FlowTrace.cs:26)
+      USER MenuView.OnPlayClicked()  (Assets/Scripts/UI/MenuView.cs:41)
+      pkg  EventSystem.Update()  (Library/PackageCache/com.unity.ugui@f17df9b1ab21/Runtime/UGUI/EventSystem/EventSystem.cs:514)
+  ⛔ [User log] L159-169 Save failed: disk quota exceeded for slot 2  @ SaveSystem.cs:77
+      USER SaveSystem.Write(int)  (Assets/Scripts/Save/SaveSystem.cs:77)
+      USER TurnView.OnEndTurn()  (Assets/Scripts/UI/TurnView.cs:63)
+  ⛔ [Exception] L171-182 MissingReferenceException: The object of type 'UnityEngine.GameObject' has been destroyed …  @ TurnView.cs:98  +2 lines
+      | Your script should either check if it is null or you should not destroy the object.
+      | Rethrow as ZenjectException: Error occurred while disposing IDisposable with type 'GameRun…
+      eng  Object.MarshalledUnityObject.TryThrowEditorNullExceptionObject(Object, String)
+      eng  GameObject.SetActive(Boolean)
+      USER TurnView.HideFile()  (Assets/Scripts/UI/TurnView.cs:98)
+      USER TurnListState.OnExit()  (Assets/Scripts/Flow/States/TurnListState.cs:47)
+      pkg  DisposableManager.Dispose()  (Assets/Plugins/Zenject/Source/Runtime/DisposableManager.cs:122)
+      pkg  DisposableManager.Dispose()  (Assets/Plugins/Zenject/Source/Runtime/DisposableManager.cs:126)
+      pkg  MonoKernel.OnDestroy()  (Assets/Plugins/Zenject/Source/Runtime/Kernels/MonoKernel.cs:122)
+  · [Memory] L184-184 Unloading 3 Unused Serialized files (Serialized files now loaded: 0) (noise)
+  · [Play mode] L185-188 Exited play mode (#1), restored editor scenes in 23 ms  +3 lines
+· [Memory] L189-191 Unloaded 3 unused assets (1.9 KB); 3678 objects still loaded  +2 lines (noise)
+▾ Script compilation [L193-202] 14.60 s  errors=2 warnings=0
+  · [Build] L193-194 Script compilation requested: Assetdatabase observed changes in script compilation related…  +1 lines
+  · [Build] L195-200 Starting: C:\Program Files\Unity\Hub\Editor\6000.3.11f1\Editor\Data\Tools\BuildPipeline\be…  +5 lines
+  ⛔ [Compiler] L201-201 CS0103: The name 'turnIndex' does not exist in the current context  @ GameRunner.cs:61
+  ⛔ [Build] L202-202 Script compilation failed after 14.60 s
+· [User log] L203-213 Clearing [LiberationSans SDF - Fallback] dynamic font asset data.  @ TMP_EditorResourceManager.cs:36
+    pkg  EditorEventCallbacks.InitializeFontAssetResourceChangeCallBacks() [lambda]  (Library/PackageCache/com.unity.ugui@f17df9b1ab21/Editor/TMP/TMP_EditorResourceManager.cs:36)
+    eng  EditorApplication.Internal_EditorApplicationQuit()
+· [System] L215-215 [Physics::Module] Cleanup current backend.
+▾ Shutdown [L216-222]  errors=0 warnings=0
+  · [System] L216-216 Input System module state changed to: ShutdownInProgress.
+  · [Input] L217-218 Input System polling thread exited.  +1 lines (noise)
+  · [System] L219-219 Cleanup mono
+  · [Other] L220-221 Checking for leaked weakptr:  +1 lines
+  · [Package Manager] L222-222 [Package Manager] Server process was shutdown (noise)

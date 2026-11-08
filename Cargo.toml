@@ -13,6 +13,8 @@ description = "Comte Logger: a human-friendly log analyzer for game engines."
 [workspace.dependencies]
 comte-core = { path = "crates/comte-core" }
 comte-unity = { path = "crates/comte-unity" }
+regex = "1.13.1"
+insta = "1.49.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

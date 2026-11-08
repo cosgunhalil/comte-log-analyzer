@@ -1,0 +1,222 @@
+[Licensing::Module] Trying to connect to existing licensing client channel...
+Built from '6000.3/staging' branch; Version is '6000.3.11f1 (3000ef702840) revision 3145967'; Using compiler version '194234433'; Build Type 'Release'
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-dev" at "2026-11-05T17:59:24.8410007Z"
+OS: 'Windows 11  (10.0.26200) CoreSingleLanguage' Language: 'en' Physical Memory: 32600 MB
+BatchMode: 0, IsHumanControllingUs: 1, StartBugReporterOnCrash: 1, Is64bit: 1
+System  architecture: x64
+Process architecture: x64
+Date: 2026-11-05T17:59:24Z
+[Licensing::Client] Handshaking with LicensingClient:
+  Version:                 1.18.3+d7ffd15
+  Session Id:              00000000000000000000000000000000
+  Machine Id:              REDACTED=
+[Licensing::Module] License group:
+  Id: XX-XXXX-XXXX-XXXX-XXXX-XXXX
+  Product: Unity Personal
+  Type: ULF
+  Expiration: Unlimited
+[Licensing::Module] Licensing Background thread has ended after 0.05s
+
+COMMAND LINE ARGUMENTS:
+C:\Program Files\Unity\Hub\Editor\6000.3.11f1\Editor\Unity.exe
+-projectpath
+C:\Users\dev\Projects\Sample Game
+-useHub
+-accessToken
+<token>
+Successfully changed project path to: C:\Users\dev\Projects\Sample Game
+C:/Users/dev/Projects/Sample Game
+[UnityMemory] Configuration Parameters - Can be set up in boot.config
+    "memorysetup-temp-allocator-size-gfx=262144"
+    "memorysetup-bucket-allocator-granularity=16"
+Input System module state changed to: Initialized.
+[Physics::Module] Initialized fallback backend.
+[Package Manager] Connected to IPC stream "Upm-19228" after 0.4 seconds.
+Initialize engine version: 6000.3.11f1 (3000ef702840)
+[D3D12 Device Filter] Vendor Name: NVIDIA
+[D3D12 Device Filter] Device Name: NVIDIA GeForce RTX 2070 Super
+GfxDevice: creating device client; kGfxThreadingModeSplitJobs
+Direct3D:
+    Version:         Direct3D 12 [level 12.2]
+    Renderer:        NVIDIA GeForce RTX 2070 Super (ID=0x1e91)
+    Vendor:          NVIDIA
+    VRAM:            7989 MB
+    App VRAM Budget: 7221 MB
+    Driver:          32.0.16.1692
+Initialize mono
+Mono path[0] = 'C:/Program Files/Unity/Hub/Editor/6000.3.11f1/Editor/Data/Managed'
+Mono config path = 'C:/Program Files/Unity/Hub/Editor/6000.3.11f1/Editor/Data/MonoBleedingEdge/etc'
+Begin MonoManager ReloadAssembly
+Registering precompiled unity dll's ...
+Registered in 0.008224 seconds.
+- Loaded All Assemblies, in  0.629 seconds
+Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  0.680 seconds
+Domain Reload Profiling: 1304ms
+	BeginReloadAssembly (193ms)
+		ExecutionOrderSort (0ms)
+	LoadAllAssembliesAndSetupDomain (260ms)
+	FinalizeReload (681ms)
+Application.AssetDatabase Initial Refresh Start
+[Package Manager] Restoring resolved packages state from cache
+[Package Manager] Registered 3 packages:
+  Packages from [https://packages.unity.com]:
+    com.unity.ide.rider@3.0.39 (location: C:\Users\dev\Projects\Sample Game\Library\PackageCache\com.unity.ide.rider@4504839d03f7)
+  Built-in packages:
+    com.unity.ugui@2.0.0 (location: C:\Users\dev\Projects\Sample Game\Library\PackageCache\com.unity.ugui@f17df9b1ab21)
+[Package Manager] Done registering packages in 0.02 seconds
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.11f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aEDbg.dag"
+WorkingDir: C:/Users/dev/Projects/Sample Game
+ExitCode: 4 Duration: 0s233ms
+*** Tundra requires additional run (0.19 seconds), 0 items updated, 405 evaluated
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.11f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aEDbg.dag"
+WorkingDir: C:/Users/dev/Projects/Sample Game
+ExitCode: 0 Duration: 0s151ms
+Assets/Scripts/Legacy/OldLoader.cs(14,9): warning CS0618: 'WWW' is obsolete: 'Use UnityWebRequest, a fully featured replacement which is more efficient and has additional features'
+*** Tundra build success (0.12 seconds), 0 items updated, 405 evaluated
+AssetDatabase: script compilation time: 1.296285s
+Begin MonoManager ReloadAssembly
+- Loaded All Assemblies, in  0.734 seconds
+Mono: successfully reloaded assembly
+Domain Reload Profiling: 1825ms
+	BeginReloadAssembly (337ms)
+	FinalizeReload (1097ms)
+Asset Pipeline Refresh (id=061c453a100b521459d8cb43e1812596): Total: 3.530 seconds - Initiated by InitialRefreshV2(ForceSynchronousImport)
+	Summary:
+		Imports: total=0 (actual=0, local cache=0, cache server=0)
+		Asset DB Process Time: managed=0 ms, native=1392 ms
+Unloading 16 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 1579 unused Assets / (2.9 MB). Loaded Objects now: 2181.
+Memory consumption went from 141.1 MB to 138.1 MB.
+Total: 7.788200 ms (FindLiveObjects: 0.209100 ms CreateObjectMapping: 0.119400 ms MarkObjects: 5.467700 ms  DeleteObjects: 1.991200 ms)
+
+<RI> Initializing input.
+<RI> Input initialized.
+[Project] Loading completed in 9.877 seconds
+	Project init time: 				6.769 seconds
+	Scene opening time: 			2.840 seconds
+UnityConnectWebRequestException: Token Exchange failed due a failure with the web request.
+  at UnityEditor.Connect.TokenExchange.VerifyTokenExchangeResponse (UnityEngine.Networking.UnityWebRequest exchangeRequest) [0x00019] in <2e4eaf245b924ed1b8c17467295ae042>:0
+  at UnityEngine.UnitySynchronizationContext.ExecuteTasks () [0x00014] in <1b6535aa091d41cf8b3ca222ed9ceef0>:0
+
+Asset Pipeline Refresh (id=35bd790774014b14f9af60ee35eaea95): Total: 0.006 seconds - Initiated by RefreshV2(AllowForceSynchronousImport)
+Opening scene 'Assets/Scenes/Boot.unity'
+Unloading 135 Unused Serialized files (Serialized files now loaded: 0)
+Loaded scene 'Assets/Scenes/Boot.unity'
+	Deserialize:            117.855 ms
+	Integration:            82.151 ms
+	Total Operation Time:   205.298 ms
+Reloading assemblies for play mode.
+Reloading assemblies after forced synchronous recompile.
+Begin MonoManager ReloadAssembly
+- Loaded All Assemblies, in  0.705 seconds
+Mono: successfully reloaded assembly
+Domain Reload Profiling: 2503ms
+	BeginReloadAssembly (505ms)
+	FinalizeReload (1803ms)
+Loaded scene 'Temp/__Backupscenes/0.backup'
+	Deserialize:            9.283 ms
+	Total Operation Time:   412.494 ms
+[Text] Draft text is allowed: 558 unreviewed fragments are in use. Development only.
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:LogWarning (object)
+SampleGame.Installers.GameInstaller:Report (SampleGame.Text.Import.TextData) (at Assets/Scripts/Installers/GameInstaller.cs:84)
+SampleGame.Installers.GameInstaller:InstallBindings () (at Assets/Scripts/Installers/GameInstaller.cs:31)
+Zenject.MonoInstaller:InstallBindings () (at Assets/Plugins/Zenject/Source/Install/MonoInstaller.cs:20)
+
+(Filename: Assets/Scripts/Installers/GameInstaller.cs Line: 84)
+
+[Flow] Boot -> MainMenu
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+SampleGame.Flow.FlowTrace:Log (string) (at Assets/Scripts/Flow/FlowTrace.cs:26)
+SampleGame.Flow.GameRunner/<Run>d__4:MoveNext () (at Assets/Scripts/Flow/GameRunner.cs:52)
+UnityEngine.SetupCoroutine:InvokeMoveNext (System.Collections.IEnumerator,intptr)
+
+(Filename: Assets/Scripts/Flow/FlowTrace.cs Line: 26)
+
+[Flow] MainMenu -> Week
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+SampleGame.Flow.FlowTrace:Log (string) (at Assets/Scripts/Flow/FlowTrace.cs:26)
+SampleGame.UI.MenuView:OnPlayClicked () (at Assets/Scripts/UI/MenuView.cs:41)
+UnityEngine.EventSystems.EventSystem:Update () (at ./Library/PackageCache/com.unity.ugui@f17df9b1ab21/Runtime/UGUI/EventSystem/EventSystem.cs:514)
+
+(Filename: Assets/Scripts/Flow/FlowTrace.cs Line: 26)
+
+Save failed: disk quota exceeded for slot 2
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:LogError (object)
+SampleGame.Save.SaveSystem:Write (int) (at Assets/Scripts/Save/SaveSystem.cs:77)
+SampleGame.UI.TurnView:OnEndTurn () (at Assets/Scripts/UI/TurnView.cs:63)
+
+(Filename: Assets/Scripts/Save/SaveSystem.cs Line: 77)
+
+MissingReferenceException: The object of type 'UnityEngine.GameObject' has been destroyed but you are still trying to access it.
+Your script should either check if it is null or you should not destroy the object.
+  at UnityEngine.Object+MarshalledUnityObject.TryThrowEditorNullExceptionObject (UnityEngine.Object unityObj, System.String parameterName) [0x0006a] in <1b6535aa091d41cf8b3ca222ed9ceef0>:0
+  at UnityEngine.GameObject.SetActive (System.Boolean value) [0x00006] in <1b6535aa091d41cf8b3ca222ed9ceef0>:0
+  at SampleGame.UI.TurnView.HideFile () [0x00001] in C:\Users\dev\Projects\Sample Game\Assets\Scripts\UI\TurnView.cs:98
+  at SampleGame.Flow.States.TurnListState.OnExit () [0x00049] in C:\Users\dev\Projects\Sample Game\Assets\Scripts\Flow\States\TurnListState.cs:47
+  at Zenject.DisposableManager.Dispose () [0x000d7] in C:\Users\dev\Projects\Sample Game\Assets\Plugins\Zenject\Source\Runtime\DisposableManager.cs:122
+Rethrow as ZenjectException: Error occurred while disposing IDisposable with type 'GameRunner'
+  at Zenject.DisposableManager.Dispose () [0x000ea] in C:\Users\dev\Projects\Sample Game\Assets\Plugins\Zenject\Source\Runtime\DisposableManager.cs:126
+  at Zenject.MonoKernel.OnDestroy () [0x0004f] in C:\Users\dev\Projects\Sample Game\Assets\Plugins\Zenject\Source\Runtime\Kernels\MonoKernel.cs:122
+
+(Filename: Assets/Scripts/UI/TurnView.cs Line: 98)
+
+Unloading 3 Unused Serialized files (Serialized files now loaded: 0)
+Loaded scene 'Temp/__Backupscenes/0.backup'
+	Deserialize:            5.529 ms
+	Integration:            17.862 ms
+	Total Operation Time:   23.449 ms
+Unloading 3 unused Assets / (1.9 KB). Loaded Objects now: 3678.
+Memory consumption went from 0.80 GB to 0.80 GB.
+Total: 29.929600 ms (FindLiveObjects: 0.278000 ms CreateObjectMapping: 0.091400 ms MarkObjects: 29.513100 ms  DeleteObjects: 0.045300 ms)
+
+[ScriptCompilation] Requested script compilation because: Assetdatabase observed changes in script compilation related files
+AssetDatabase: script compilation time: 0.001592s
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.11f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aEDbg.dag"
+WorkingDir: C:/Users/dev/Projects/Sample Game
+ExitCode: 0 Duration: 14s
+[384/405    2s] Csc Library/Bee/artifacts/1900b0aEDbg.dag/SampleGame.Core.dll (+2 others)
+[BUSY       6s] Csc Library/Bee/artifacts/1900b0aEDbg.dag/SampleGame.Flow.dll (+2 others)
+[390/405    8s] Csc Library/Bee/artifacts/1900b0aEDbg.dag/SampleGame.Flow.dll (+2 others)
+Assets/Scripts/Flow/GameRunner.cs(61,17): error CS0103: The name 'turnIndex' does not exist in the current context
+*** Tundra build failed (14.60 seconds), 21 items updated, 405 evaluated
+Clearing [LiberationSans SDF - Fallback] dynamic font asset data.
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+TMPro.EditorEventCallbacks/<>c:<InitializeFontAssetResourceChangeCallBacks>b__0_0 () (at ./Library/PackageCache/com.unity.ugui@f17df9b1ab21/Editor/TMP/TMP_EditorResourceManager.cs:36)
+UnityEditor.EditorApplication:Internal_EditorApplicationQuit ()
+
+(Filename: ./Library/PackageCache/com.unity.ugui@f17df9b1ab21/Editor/TMP/TMP_EditorResourceManager.cs Line: 36)
+
+[Physics::Module] Cleanup current backend.
+Input System module state changed to: ShutdownInProgress.
+Input System polling thread exited.
+Input System module state changed to: Shutdown.
+Cleanup mono
+Checking for leaked weakptr:
+  Found no leaked weakptrs.
+[Package Manager] Server process was shutdown

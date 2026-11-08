@@ -487,6 +487,7 @@ pub enum MetricKind {
     AssetRefresh,
     Compile,
     Startup,
+    SceneLoad,
     SceneUnload,
     UnusedAssetsUnloaded,
     LoadedObjects,
@@ -499,6 +500,7 @@ impl MetricKind {
             MetricKind::AssetRefresh => "Asset refresh",
             MetricKind::Compile => "Script compilation",
             MetricKind::Startup => "Startup",
+            MetricKind::SceneLoad => "Scene load",
             MetricKind::SceneUnload => "Scene unload",
             MetricKind::UnusedAssetsUnloaded => "Unused assets unloaded",
             MetricKind::LoadedObjects => "Loaded objects",
@@ -545,9 +547,35 @@ impl Metric {
     }
 }
 
+/// Human-friendly duration: `850 ms`, `1.30 s`, `2 min 05 s`.
+pub fn format_duration(duration: Duration) -> String {
+    let secs = duration.as_secs_f64();
+    if secs < 1.0 {
+        let ms = secs * 1000.0;
+        if ms < 10.0 && ms.fract() != 0.0 {
+            format!("{ms:.1} ms")
+        } else {
+            format!("{} ms", ms.round() as u64)
+        }
+    } else if secs < 60.0 {
+        format!("{secs:.2} s")
+    } else {
+        let total = secs.round() as u64;
+        format!("{} min {:02} s", total / 60, total % 60)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_durations_for_humans() {
+        assert_eq!(format_duration(Duration::from_micros(1592)), "1.6 ms");
+        assert_eq!(format_duration(Duration::from_millis(205)), "205 ms");
+        assert_eq!(format_duration(Duration::from_millis(1304)), "1.30 s");
+        assert_eq!(format_duration(Duration::from_secs(125)), "2 min 05 s");
+    }
 
     #[test]
     fn severity_is_ordered_for_threshold_filters() {

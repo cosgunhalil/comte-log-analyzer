@@ -24,7 +24,7 @@ pub use document::LogDocument;
 pub use engine::{EngineSupport, LogLocator};
 pub use model::{
     Category, Fact, FactKey, FrameKind, LogEntry, Metric, MetricKind, MetricValue, Section,
-    SectionKind, Severity, SeverityCounts, SourceRef, StackFrame,
+    SectionKind, Severity, SeverityCounts, SourceRef, StackFrame, format_duration,
 };
 pub use parser::{LogParser, ParseEvent, PlainTextParser, SectionStart};
 pub use reader::{LineReader, parse_file, parse_reader};

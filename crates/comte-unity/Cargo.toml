@@ -8,6 +8,10 @@ authors.workspace = true
 
 [dependencies]
 comte-core.workspace = true
+regex.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+insta.workspace = true
