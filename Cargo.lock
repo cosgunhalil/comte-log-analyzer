@@ -3,5 +3,20 @@
 version = 4
 
 [[package]]
-name = "comte-logger"
+name = "comte-app"
 version = "0.1.0"
+dependencies = [
+ "comte-core",
+ "comte-unity",
+]
+
+[[package]]
+name = "comte-core"
+version = "0.1.0"
+
+[[package]]
+name = "comte-unity"
+version = "0.1.0"
+dependencies = [
+ "comte-core",
+]

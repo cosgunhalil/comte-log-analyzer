@@ -1,0 +1,12 @@
+[package]
+name = "comte-core"
+description = "Engine-agnostic log model, parser traits and document building for Comte Logger."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

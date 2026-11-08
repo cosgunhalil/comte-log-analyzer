@@ -1,0 +1,13 @@
+[package]
+name = "comte-unity"
+description = "Unity Editor and Player log support for Comte Logger."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+comte-core.workspace = true
+
+[lints]
+workspace = true

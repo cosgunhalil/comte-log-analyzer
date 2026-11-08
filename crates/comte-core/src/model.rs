@@ -1,0 +1,621 @@
+//! Core data model shared by every engine and by the UI.
+
+use std::fmt;
+use std::ops::Range;
+use std::time::Duration;
+
+// ---------------------------------------------------------------------------
+// Severity
+// ---------------------------------------------------------------------------
+
+/// How bad an entry is. Ordered from least to most severe, so filters such as
+/// "severity >= Warning" are a plain comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum Severity {
+    #[default]
+    Info,
+    Warning,
+    Error,
+    Exception,
+    Crash,
+}
+
+impl Severity {
+    pub const ALL: [Severity; 5] = [
+        Severity::Info,
+        Severity::Warning,
+        Severity::Error,
+        Severity::Exception,
+        Severity::Crash,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Severity::Info => "Info",
+            Severity::Warning => "Warning",
+            Severity::Error => "Error",
+            Severity::Exception => "Exception",
+            Severity::Crash => "Crash",
+        }
+    }
+
+    /// Error, Exception and Crash all count as "errors" in summaries.
+    pub fn is_error_like(self) -> bool {
+        self >= Severity::Error
+    }
+}
+
+impl fmt::Display for Severity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Category
+// ---------------------------------------------------------------------------
+
+/// What produced an entry. Drives filtering and the noise policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Category {
+    UserLog,
+    Exception,
+    Compiler,
+    Crash,
+    AssetPipeline,
+    DomainReload,
+    PlayMode,
+    SceneLoad,
+    Memory,
+    PackageManager,
+    Licensing,
+    Build,
+    Shader,
+    Graphics,
+    Input,
+    System,
+    Other,
+}
+
+impl Category {
+    pub const ALL: [Category; 17] = [
+        Category::UserLog,
+        Category::Exception,
+        Category::Compiler,
+        Category::Crash,
+        Category::AssetPipeline,
+        Category::DomainReload,
+        Category::PlayMode,
+        Category::SceneLoad,
+        Category::Memory,
+        Category::PackageManager,
+        Category::Licensing,
+        Category::Build,
+        Category::Shader,
+        Category::Graphics,
+        Category::Input,
+        Category::System,
+        Category::Other,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Category::UserLog => "User log",
+            Category::Exception => "Exception",
+            Category::Compiler => "Compiler",
+            Category::Crash => "Crash",
+            Category::AssetPipeline => "Asset pipeline",
+            Category::DomainReload => "Domain reload",
+            Category::PlayMode => "Play mode",
+            Category::SceneLoad => "Scene load",
+            Category::Memory => "Memory",
+            Category::PackageManager => "Package Manager",
+            Category::Licensing => "Licensing",
+            Category::Build => "Build",
+            Category::Shader => "Shader",
+            Category::Graphics => "Graphics",
+            Category::Input => "Input",
+            Category::System => "System",
+            Category::Other => "Other",
+        }
+    }
+
+    /// Engine chatter that is hidden by default ("Show engine noise" reveals it).
+    pub fn is_noise(self) -> bool {
+        matches!(
+            self,
+            Category::Licensing | Category::PackageManager | Category::Input | Category::Memory
+        )
+    }
+}
+
+impl fmt::Display for Category {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Source locations and stack frames
+// ---------------------------------------------------------------------------
+
+/// A location in source code, e.g. `Assets/Game/Player.cs:42:13`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SourceRef {
+    /// Path as written in the log (often project-relative, e.g. `Assets/...`).
+    pub path: String,
+    pub line: Option<u32>,
+    pub column: Option<u32>,
+}
+
+impl SourceRef {
+    pub fn new(path: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            line: None,
+            column: None,
+        }
+    }
+
+    pub fn with_line(mut self, line: u32) -> Self {
+        self.line = Some(line);
+        self
+    }
+
+    pub fn with_column(mut self, column: u32) -> Self {
+        self.column = Some(column);
+        self
+    }
+
+    /// The file name without directories, for compact display (`Player.cs:42`).
+    pub fn file_name(&self) -> &str {
+        self.path.rsplit(['/', '\\']).next().unwrap_or(&self.path)
+    }
+
+    /// Compact `File.cs:42` form used on entry rows.
+    pub fn short(&self) -> String {
+        match self.line {
+            Some(line) => format!("{}:{line}", self.file_name()),
+            None => self.file_name().to_owned(),
+        }
+    }
+}
+
+impl fmt::Display for SourceRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.path)?;
+        if let Some(line) = self.line {
+            write!(f, ":{line}")?;
+            if let Some(column) = self.column {
+                write!(f, ":{column}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Who owns the code in a stack frame. Decides how the UI renders it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FrameKind {
+    /// The game's own code (e.g. under `Assets/`). Rendered bold.
+    User,
+    /// Third-party packages (e.g. `Packages/`, `Library/PackageCache`).
+    Package,
+    /// Engine and runtime frames (`UnityEngine.*`, `System.*`). Folded by default.
+    #[default]
+    Engine,
+    /// Native frames from crash dumps.
+    Native,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackFrame {
+    /// Cleaned, human-readable signature, e.g. `GameInstaller.Report(TextData)`.
+    pub text: String,
+    /// Full original signature (namespaces, raw argument types) for tooltips.
+    pub raw: String,
+    pub location: Option<SourceRef>,
+    pub kind: FrameKind,
+}
+
+impl StackFrame {
+    pub fn new(text: impl Into<String>, kind: FrameKind) -> Self {
+        let text = text.into();
+        Self {
+            raw: text.clone(),
+            text,
+            location: None,
+            kind,
+        }
+    }
+
+    pub fn with_raw(mut self, raw: impl Into<String>) -> Self {
+        self.raw = raw.into();
+        self
+    }
+
+    pub fn with_location(mut self, location: SourceRef) -> Self {
+        self.location = Some(location);
+        self
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Entries
+// ---------------------------------------------------------------------------
+
+/// One logical log entry. A single entry may span many raw lines
+/// (message + details + stack trace).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogEntry {
+    /// Assigned by [`crate::LogDocument`]; parsers can leave it at 0.
+    pub id: u64,
+    /// Raw lines this entry came from (1-based, half-open).
+    pub line_range: Range<usize>,
+    /// Innermost timeline section; assigned by [`crate::LogDocument`].
+    pub section_id: Option<u32>,
+    pub severity: Severity,
+    pub category: Category,
+    /// First line of the message, cleaned up.
+    pub message: String,
+    /// Additional message lines (multi-line logs, indented continuation lines).
+    pub details: Vec<String>,
+    pub stack: Vec<StackFrame>,
+    /// Where the log claims it came from, e.g. `(Filename: X Line: N)`.
+    pub source: Option<SourceRef>,
+    /// Hash used to collapse duplicates; assigned by [`crate::LogDocument`].
+    pub fingerprint: u64,
+}
+
+impl LogEntry {
+    pub fn new(
+        severity: Severity,
+        category: Category,
+        message: impl Into<String>,
+        line_range: Range<usize>,
+    ) -> Self {
+        Self {
+            id: 0,
+            line_range,
+            section_id: None,
+            severity,
+            category,
+            message: message.into(),
+            details: Vec::new(),
+            stack: Vec::new(),
+            source: None,
+            fingerprint: 0,
+        }
+    }
+
+    pub fn with_details(mut self, details: Vec<String>) -> Self {
+        self.details = details;
+        self
+    }
+
+    pub fn with_stack(mut self, stack: Vec<StackFrame>) -> Self {
+        self.stack = stack;
+        self
+    }
+
+    pub fn with_source(mut self, source: SourceRef) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    /// The most useful location to show on the entry row: the first frame in
+    /// the game's own code, falling back to the location the log reported.
+    pub fn culprit(&self) -> Option<&SourceRef> {
+        self.stack
+            .iter()
+            .find(|frame| frame.kind == FrameKind::User && frame.location.is_some())
+            .and_then(|frame| frame.location.as_ref())
+            .or(self.source.as_ref())
+    }
+
+    pub fn user_frames(&self) -> impl Iterator<Item = &StackFrame> {
+        self.stack.iter().filter(|f| f.kind == FrameKind::User)
+    }
+
+    /// Number of raw lines this entry spans.
+    pub fn line_count(&self) -> usize {
+        self.line_range.len()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Timeline sections
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SectionKind {
+    Startup,
+    Compile,
+    DomainReload,
+    AssetRefresh,
+    PlayMode,
+    SceneLoad,
+    Build,
+    Shutdown,
+    Crash,
+}
+
+impl SectionKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            SectionKind::Startup => "Startup",
+            SectionKind::Compile => "Script compilation",
+            SectionKind::DomainReload => "Domain reload",
+            SectionKind::AssetRefresh => "Asset refresh",
+            SectionKind::PlayMode => "Play mode",
+            SectionKind::SceneLoad => "Scene load",
+            SectionKind::Build => "Build",
+            SectionKind::Shutdown => "Shutdown",
+            SectionKind::Crash => "Crash",
+        }
+    }
+}
+
+/// Per-severity counters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SeverityCounts {
+    pub info: u32,
+    pub warning: u32,
+    pub error: u32,
+    pub exception: u32,
+    pub crash: u32,
+}
+
+impl SeverityCounts {
+    pub fn add(&mut self, severity: Severity) {
+        *self.slot(severity) += 1;
+    }
+
+    pub fn get(&self, severity: Severity) -> u32 {
+        match severity {
+            Severity::Info => self.info,
+            Severity::Warning => self.warning,
+            Severity::Error => self.error,
+            Severity::Exception => self.exception,
+            Severity::Crash => self.crash,
+        }
+    }
+
+    /// Errors + exceptions + crashes.
+    pub fn errors(&self) -> u32 {
+        self.error + self.exception + self.crash
+    }
+
+    pub fn total(&self) -> u32 {
+        self.info + self.warning + self.errors()
+    }
+
+    pub fn merge(&mut self, other: &SeverityCounts) {
+        for severity in Severity::ALL {
+            *self.slot(severity) += other.get(severity);
+        }
+    }
+
+    fn slot(&mut self, severity: Severity) -> &mut u32 {
+        match severity {
+            Severity::Info => &mut self.info,
+            Severity::Warning => &mut self.warning,
+            Severity::Error => &mut self.error,
+            Severity::Exception => &mut self.exception,
+            Severity::Crash => &mut self.crash,
+        }
+    }
+}
+
+/// A collapsible block of the timeline ("Play mode #2", "Domain reload", ...).
+/// Sections can nest: a domain reload inside a play mode session, for example.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    pub id: u32,
+    pub parent: Option<u32>,
+    /// 0 for top-level sections.
+    pub depth: u16,
+    pub kind: SectionKind,
+    pub title: String,
+    /// Raw lines covered (1-based, half-open). Grows while the section is open.
+    pub line_range: Range<usize>,
+    pub duration: Option<Duration>,
+    /// Counts of all entries inside this section, including nested sections.
+    pub counts: SeverityCounts,
+    pub closed: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Facts and metrics
+// ---------------------------------------------------------------------------
+
+/// Well-known facts shown on the info card.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FactKey {
+    EngineVersion,
+    Os,
+    PhysicalMemory,
+    Cpu,
+    Gpu,
+    GraphicsApi,
+    Vram,
+    GpuDriver,
+    ProjectPath,
+    StartDate,
+    Other(String),
+}
+
+impl FactKey {
+    pub fn label(&self) -> &str {
+        match self {
+            FactKey::EngineVersion => "Engine version",
+            FactKey::Os => "OS",
+            FactKey::PhysicalMemory => "Memory",
+            FactKey::Cpu => "CPU",
+            FactKey::Gpu => "GPU",
+            FactKey::GraphicsApi => "Graphics API",
+            FactKey::Vram => "VRAM",
+            FactKey::GpuDriver => "GPU driver",
+            FactKey::ProjectPath => "Project",
+            FactKey::StartDate => "Started",
+            FactKey::Other(name) => name,
+        }
+    }
+}
+
+/// A piece of environment information found in the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fact {
+    pub key: FactKey,
+    pub value: String,
+    pub line: usize,
+}
+
+impl Fact {
+    pub fn new(key: FactKey, value: impl Into<String>, line: usize) -> Self {
+        Self {
+            key,
+            value: value.into(),
+            line,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MetricKind {
+    DomainReload,
+    AssetRefresh,
+    Compile,
+    Startup,
+    SceneUnload,
+    UnusedAssetsUnloaded,
+    LoadedObjects,
+}
+
+impl MetricKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            MetricKind::DomainReload => "Domain reload",
+            MetricKind::AssetRefresh => "Asset refresh",
+            MetricKind::Compile => "Script compilation",
+            MetricKind::Startup => "Startup",
+            MetricKind::SceneUnload => "Scene unload",
+            MetricKind::UnusedAssetsUnloaded => "Unused assets unloaded",
+            MetricKind::LoadedObjects => "Loaded objects",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetricValue {
+    Duration(Duration),
+    Count(u64),
+}
+
+/// A measurement extracted from the log (timings, object counts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Metric {
+    pub kind: MetricKind,
+    pub value: MetricValue,
+    pub line: usize,
+}
+
+impl Metric {
+    pub fn duration(kind: MetricKind, duration: Duration, line: usize) -> Self {
+        Self {
+            kind,
+            value: MetricValue::Duration(duration),
+            line,
+        }
+    }
+
+    pub fn count(kind: MetricKind, count: u64, line: usize) -> Self {
+        Self {
+            kind,
+            value: MetricValue::Count(count),
+            line,
+        }
+    }
+
+    pub fn as_duration(&self) -> Option<Duration> {
+        match self.value {
+            MetricValue::Duration(d) => Some(d),
+            MetricValue::Count(_) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn severity_is_ordered_for_threshold_filters() {
+        assert!(Severity::Info < Severity::Warning);
+        assert!(Severity::Warning < Severity::Error);
+        assert!(Severity::Error < Severity::Exception);
+        assert!(Severity::Exception < Severity::Crash);
+        assert!(!Severity::Warning.is_error_like());
+        assert!(Severity::Exception.is_error_like());
+    }
+
+    #[test]
+    fn noise_categories() {
+        assert!(Category::Licensing.is_noise());
+        assert!(Category::PackageManager.is_noise());
+        assert!(!Category::UserLog.is_noise());
+        assert!(!Category::Compiler.is_noise());
+        assert_eq!(
+            Category::ALL.iter().filter(|c| c.is_noise()).count(),
+            4,
+            "noise policy changed; update docs/DESIGN.md §3"
+        );
+    }
+
+    #[test]
+    fn source_ref_formatting() {
+        let r = SourceRef::new("Assets/Game/Player.cs")
+            .with_line(42)
+            .with_column(13);
+        assert_eq!(r.to_string(), "Assets/Game/Player.cs:42:13");
+        assert_eq!(r.short(), "Player.cs:42");
+        assert_eq!(SourceRef::new(r"C:\a\b\Debug.h").file_name(), "Debug.h");
+    }
+
+    #[test]
+    fn culprit_prefers_first_user_frame_over_reported_source() {
+        let entry = LogEntry::new(Severity::Error, Category::UserLog, "boom", 10..15)
+            .with_source(SourceRef::new("Runtime/Debug.bindings.h").with_line(35))
+            .with_stack(vec![
+                StackFrame::new("UnityEngine.Debug.LogError(object)", FrameKind::Engine),
+                StackFrame::new("Enemy.Spawn()", FrameKind::User)
+                    .with_location(SourceRef::new("Assets/Enemy.cs").with_line(57)),
+                StackFrame::new("Spawner.Tick()", FrameKind::User)
+                    .with_location(SourceRef::new("Assets/Spawner.cs").with_line(9)),
+            ]);
+        assert_eq!(entry.culprit().unwrap().short(), "Enemy.cs:57");
+        assert_eq!(entry.user_frames().count(), 2);
+        assert_eq!(entry.line_count(), 5);
+    }
+
+    #[test]
+    fn culprit_falls_back_to_reported_source() {
+        let entry = LogEntry::new(Severity::Info, Category::UserLog, "hi", 1..2)
+            .with_source(SourceRef::new("Assets/Flow.cs").with_line(26));
+        assert_eq!(entry.culprit().unwrap().short(), "Flow.cs:26");
+    }
+
+    #[test]
+    fn severity_counts() {
+        let mut a = SeverityCounts::default();
+        a.add(Severity::Warning);
+        a.add(Severity::Error);
+        a.add(Severity::Crash);
+        let mut b = SeverityCounts::default();
+        b.add(Severity::Exception);
+        b.merge(&a);
+        assert_eq!(b.errors(), 3);
+        assert_eq!(b.total(), 4);
+        assert_eq!(b.get(Severity::Warning), 1);
+    }
+}

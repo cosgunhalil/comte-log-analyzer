@@ -78,17 +78,19 @@ pub trait LogLocator {
 
 /// Streaming and stateful: one Unity entry can span many lines.
 /// The same parser serves full files, huge files and live tail.
-pub trait LogParser {
-    fn feed_line(&mut self, line_no: usize, line: &str) -> ParseEvent;
-    fn finish(&mut self) -> Vec<ParseEvent>;
+/// One line can produce several events (e.g. close an entry AND open a
+/// section), so events are pushed into a reusable buffer.
+pub trait LogParser: Send {
+    fn feed_line(&mut self, line_no: usize, line: &str, out: &mut Vec<ParseEvent>);
+    fn finish(&mut self, out: &mut Vec<ParseEvent>);
 }
 
 pub enum ParseEvent {
-    None,
     Entry(LogEntry),
-    SectionStart(Section),   // "Play mode #2", "Script compilation", …
-    SectionEnd { metric: Option<Metric> },
-    Fact(Fact),              // Unity version, GPU, OS… → info card
+    SectionStart(SectionStart),  // "Play mode #2", "Script compilation", … (may nest)
+    SectionEnd { line: usize, duration: Option<Duration> }, // closes innermost
+    Fact(Fact),                  // Unity version, GPU, OS… → info card
+    Metric(Metric),              // timings and counts → insights panel
 }
 
 pub trait EngineSupport {
@@ -98,6 +100,8 @@ pub trait EngineSupport {
     fn new_parser(&self, kind: LogKind) -> Box<dyn LogParser>;
 }
 ```
+
+`LogDocument` (in `comte-core`) consumes the events. It assigns entry IDs, section IDs, parents and depths, each entry's section and fingerprint, and keeps severity counts per section (including nested ones) and overall. Line numbers are 1-based; ranges are half-open.
 
 `detect` lets a dropped file open with the right parser. For example, `Initialize engine version:` means a Player log, and `Built from '…' branch` means an Editor log.
 
@@ -304,7 +308,7 @@ Choose **A** and **B** (by default `Editor-prev.log` vs `Editor.log`). The compa
 | GUI | `eframe`, `egui`, `egui_extras` |
 | Native dialogs, drag and drop | `rfd`, egui file drop |
 | Parsing | `regex`, `std::sync::LazyLock` |
-| Hashing (fingerprints) | `xxhash-rust` |
+| Hashing (fingerprints) | built-in FNV-1a 64 (stable across runs, no dependency) |
 | Diff | own fingerprint set comparison |
 | File watching | `notify` |
 | Threads | `crossbeam-channel` |
@@ -324,7 +328,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 | # | Milestone | Done when |
 |---|---|---|
 | M0 | Scaffold: Cargo project, git init, design | Builds and opens in RustRover ✅ |
-| M1 | Workspace split, `comte-core` model and traits | Core types compile and are tested |
+| M1 | Workspace split, `comte-core` model and traits | Core types compile and are tested ✅ |
 | M2 | Unity Editor parser with timeline sections and frame classification | Snapshot tests cover §4.1 and §4.3 |
 | M3 | Unity Player parser (crash, device facts, exceptions, scene/memory) | Snapshot tests cover §4.2 |
 | M4 | Locator, Player discovery and file-kind detection | Lists the real logs on this machine |
@@ -341,7 +345,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 
 ## 12. Conventions
 
-- Rust edition 2024; `cargo fmt` and `cargo clippy -- -D warnings` clean.
+- Rust edition 2024, MSRV 1.88; `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
 - **The assistant never commits.** Each task ends with a suggested [Conventional Commits](https://www.conventionalcommits.org/) message.
 - Real logs never go into the repo. Fixtures are trimmed and redacted, and `samples/private/` is git-ignored.
 

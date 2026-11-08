@@ -1,0 +1,18 @@
+[package]
+name = "comte-app"
+description = "Comte Logger desktop application."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "comte-logger"
+path = "src/main.rs"
+
+[dependencies]
+comte-core.workspace = true
+comte-unity.workspace = true
+
+[lints]
+workspace = true
