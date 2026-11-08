@@ -6,7 +6,7 @@ use comte_core::{Fact, FactKey, Metric, MetricKind, SourceRef};
 
 use crate::frames::display_path;
 
-regex!(EXCEPTION_HEADER = r"^(?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*Exception(?::\s|$)");
+regex!(EXCEPTION_HEADER = r"^(?:[A-Za-z_]\w*\.)*\w*Exception(?::\s|$)");
 regex!(FILENAME = r"^\(Filename: (?P<path>.*?) Line: (?P<line>-?\d+)\)$");
 regex!(
     UNLOADING = r"^Unloading (?P<count>\d+) unused Assets(?: / \((?P<size>[^)]+)\))?(?: to reduce memory usage)?\. Loaded Objects now: (?P<objects>\d+)"
@@ -105,6 +105,13 @@ mod tests {
             "System.IO.DirectoryNotFoundException: Could not find"
         ));
         assert!(is_exception_header("MissingReferenceException"));
+        assert!(is_exception_header(
+            "System.Exception: SteamApi_Init returned false."
+        ));
+        assert!(is_exception_header("Exception: plain"));
+        assert!(!is_exception_header(
+            "Exception for POST request at \"https://x\""
+        ));
         assert!(!is_exception_header(
             "No platform profile, message: System.IO.DirectoryNotFoundException: x"
         ));

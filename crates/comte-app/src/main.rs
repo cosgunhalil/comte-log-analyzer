@@ -9,8 +9,7 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use comte_core::{LogKind, LogParser, PlainTextParser, format_duration, parse_file};
-use comte_unity::EditorParser;
+use comte_core::{LogParser, PlainTextParser, format_duration, parse_file};
 use comte_unity::detect::{DETECT_LINES, detect_kind};
 
 fn main() -> ExitCode {
@@ -40,10 +39,9 @@ fn summarize(path: &Path) -> std::io::Result<()> {
     let head: Vec<&str> = head.iter().map(String::as_str).collect();
     let kind = detect_kind(&head);
 
-    // The Player parser arrives in M3; until then Player logs use plain text.
     let mut parser: Box<dyn LogParser> = match kind {
-        Some(LogKind::Editor) => Box::new(EditorParser::new()),
-        _ => Box::new(PlainTextParser),
+        Some(kind) => comte_unity::parser_for(kind),
+        None => Box::new(PlainTextParser),
     };
     let started = Instant::now();
     let doc = parse_file(path, parser.as_mut())?;

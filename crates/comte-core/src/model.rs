@@ -441,7 +441,11 @@ pub enum FactKey {
     Vram,
     GpuDriver,
     ProjectPath,
+    /// Install folder of a built game (Player logs).
+    GamePath,
     StartDate,
+    /// Folder where Unity's crash handler wrote a crash report.
+    CrashReport,
     Other(String),
 }
 
@@ -457,7 +461,9 @@ impl FactKey {
             FactKey::Vram => "VRAM",
             FactKey::GpuDriver => "GPU driver",
             FactKey::ProjectPath => "Project",
+            FactKey::GamePath => "Game",
             FactKey::StartDate => "Started",
+            FactKey::CrashReport => "Crash report",
             FactKey::Other(name) => name,
         }
     }

@@ -5,9 +5,11 @@
 //! - [`detect`]: tells an Editor log from a Player log by its first lines.
 //! - [`frames`]: parses, classifies and cleans up stack frames (both Unity's
 //!   `Type:Method (args) (at file:line)` form and Mono's `at Type.Method () in file:line`).
-//! - [`editor`]: the streaming [`EditorParser`] for `Editor.log` / `Editor-prev.log`.
+//! - [`EditorParser`] / [`PlayerParser`]: streaming parsers for `Editor.log`
+//!   and `Player.log` (and their `-prev` siblings), built on one shared
+//!   [`UnityParser`].
 //!
-//! Player parser: M3. Log locator: M4 (see `docs/DESIGN.md` §4 and §11).
+//! Log locator: M4 (see `docs/DESIGN.md` §11).
 
 /// Declares a lazily compiled, module-private regex.
 macro_rules! regex {
@@ -19,8 +21,18 @@ macro_rules! regex {
 
 mod common;
 pub mod detect;
-pub mod editor;
 pub mod frames;
+mod parser;
+
+use comte_core::{LogKind, LogParser};
 
 pub use detect::detect_kind;
-pub use editor::EditorParser;
+pub use parser::{EditorParser, Flavor, PlayerParser, UnityParser};
+
+/// The right parser for a Unity log kind.
+pub fn parser_for(kind: LogKind) -> Box<dyn LogParser> {
+    match kind {
+        LogKind::Editor => Box::new(EditorParser::new()),
+        LogKind::Player => Box::new(PlayerParser::new()),
+    }
+}

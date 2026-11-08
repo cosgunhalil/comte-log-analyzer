@@ -1,0 +1,90 @@
+Mono path[0] = 'C:/Games/Sample Game/SampleGame_Data/Managed'
+Mono config path = 'C:/Games/Sample Game/MonoBleedingEdge/etc'
+Initialize engine version: 2019.4.40f1 (ffc62b691db5)
+[Subsystems] Discovering subsystems at path C:/Games/Sample Game/SampleGame_Data/UnitySubsystems
+GfxDevice: creating device client; threaded=1
+Direct3D:
+    Version:  Direct3D 11.0 [level 11.1]
+    Renderer: NVIDIA GeForce RTX 2070 Super (ID=0x1e91)
+    Vendor:
+    VRAM:     8003 MB
+    Driver:   31.0.15.3598
+Begin MonoManager ReloadAssembly
+- Completed reload, in  8.143 seconds
+<RI> Initializing input.
+New input system (experimental) initialized
+<RI> Initialized touch support.
+UnloadTime: 9.500300 ms
+Odin Serializer ArchitectureInfo initialization with defaults (all unaligned read/writes disabled).
+(Filename: C:\buildslave\unity\build\Runtime/Export/Debug/Debug.bindings.h Line: 39)
+
+Platform: Steam client not running, falling back to offline profile
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:LogWarning(Object)
+SampleGame.Platform.SteamPlatform:Awake()
+
+(Filename: C:\buildslave\unity\build\Runtime/Export/Debug/Debug.bindings.h Line: 35)
+
+System.Exception: SteamApi_Init returned false. Steam isn't running, couldn't find Steam, AppId is ureleased, Don't own AppId.
+  at Steamworks.SteamClient.Init (System.UInt32 appid, System.Boolean asyncCallbacks) [0x00046] in <19bd4cc6a4004258bf538b05ac1133d6>:0
+  at SampleGame.SteamIntegration.Awake () [0x0001e] in <7d16bf5c94214907abf8179afb6fefb3>:0
+(Filename: C:\buildslave\unity\build\Runtime/Export/Debug/Debug.bindings.h Line: 39)
+
+Unloading 6 Unused Serialized files (Serialized files now loaded: 0)
+UnloadTime: 19.319700 ms
+
+Unloading 3576 unused Assets to reduce memory usage. Loaded Objects now: 261350.
+Total: 244.138300 ms (FindLiveObjects: 13.810000 ms CreateObjectMapping: 2.803300 ms MarkObjects: 223.540600 ms  DeleteObjects: 3.984100 ms)
+
+[MultiplayerManager] Login session expired or expiring soon: requesting new token
+[MultiplayerManager] Error while authenticating. Logging out.
+Uploading Crash Report
+ArgumentNullException: Value cannot be null.
+Parameter name: value
+  at System.IO.BinaryWriter.Write (System.String value) [0x00003] in <695d1cc93cca45069c528c15c9fdd749>:0
+  at BinaryExtensions.Write (System.IO.BinaryWriter writer, LoginSession value) [0x00082] in <dabb42a0fb544f4299a6f22cd4143653>:0
+  at SavefileHelper.SaveLoginSession (LoginSession session) [0x0002e] in <dabb42a0fb544f4299a6f22cd4143653>:0
+UnityEngine.DebugLogHandler:Internal_LogException(Exception, Object)
+UnityEngine.DebugLogHandler:LogException(Exception, Object)
+UnityEngine.Logger:LogException(Exception, Object)
+UnityEngine.Debug:LogException(Exception)
+SavefileHelper:SaveLoginSession(LoginSession)
+MultiplayerManager:LogOut()
+<>c__DisplayClass70_0:<RefreshSession>b__2(Exception)
+Proyecto26.<CreateRequestAndRetry>d__0:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+Curl error 42: Callback aborted
+
+(Filename:  Line: 867)
+
+Unloading 3 Unused Serialized files (Serialized files now loaded: 0)
+UnloadTime: 243.851500 ms
+
+Uploading Crash Report
+NullReferenceException: Object reference not set to an instance of an object
+  at SampleGame.Gun.StopShooting () [0x0003a] in <7d16bf5c94214907abf8179afb6fefb3>:0
+  at SampleGame.Player.ShootingState.Exit () [0x000b0] in <7d16bf5c94214907abf8179afb6fefb3>:0
+  at SampleGame.PlayerController.OnDisable () [0x00017] in <7d16bf5c94214907abf8179afb6fefb3>:0
+
+(Filename: <7d16bf5c94214907abf8179afb6fefb3> Line: 0)
+
+Setting up 8 worker threads for Enlighten.
+  Thread -> id: 6c9c -> priority: 1
+  Thread -> id: 64e8 -> priority: 1
+Crash!!!
+SymInit: Symbol-SearchPath: 'C:/Games/Sample Game/SampleGame_Data/Plugins/x86_64;.;C:\Games\Sample Game;', symOptions: 534, UserName: 'player'
+OS-Version: 10.0.0
+C:\Games\Sample Game\UnityPlayer.dll:UnityPlayer.dll (00007FFB2A6B0000), size: 28655616 (result: 0), SymType: '-exported-', PDB: ''
+========== OUTPUTTING STACK TRACE ==================
+
+0x00007FFB3D2E4C1B (GameAssembly) SampleGame_Enemies_EnemySpawner_Spawn_m3F2A
+0x00007FFB2ABF1E3D (UnityPlayer) [C:\buildslave\unity\build\Runtime\Scripting\ScriptingInvocation.cpp:281] ScriptingInvocation::Invoke
+0x00007FFB2AB8C1D2 (UnityPlayer) [C:\buildslave\unity\build\Runtime\Mono\MonoBehaviour.cpp:494] MonoBehaviour::CallUpdateMethod
+0x00007FFC1A2D7034 (KERNEL32) BaseThreadInitThunk
+0x00007FFC1B8A2651 (ntdll) RtlUserThreadStart
+
+========== END OF STACKTRACE ===========
+
+A crash has been intercepted by the crash handler. For call stack and other details, see the latest crash report generated in:
+ * C:/Users/player/AppData/Local/Temp/Sample Studio/Sample Game/Crashes

@@ -190,13 +190,25 @@ Stack frame syntax differs between versions, so the parser accepts both forms:
 
 | Pattern | Result |
 |---|---|
+The Editor and Player parsers are one shared `UnityParser` with an Editor or Player flavor. Most rules (Debug.Log traces, exceptions, `(Filename: …)`, memory, graphics, crashes) are shared.
+
+| Pattern | Result |
+|---|---|
 | `Initialize engine version: 2019.4.40f1 (…)` | Fact: Unity version; this line also identifies the file as a Player log |
-| `Direct3D:` block: `Version`, `Renderer`, `VRAM`, `Driver` | Facts: graphics API, GPU, VRAM, driver |
-| `Begin MonoManager ReloadAssembly` → `- Completed reload, in X seconds` | **Startup** metric |
-| `UnloadTime: X ms` / `Unloading N unused Assets … Loaded Objects now: M` | **SceneLoad** section boundary and **Memory** metric |
-| `Exception: msg` + `  at Ns.Class.Method (…) [0x00046] in <hash>:0` | **Exception** (IL2CPP/Mono release frames often have no line number) |
-| `(Filename: C:\buildslave\…\Debug.bindings.h Line: 35)` | An engine path, not user code; the entry location falls back to the first user frame |
-| `Crash!!!`, `========== OUTPUTTING STACK TRACE ==========`, `Received signal`, `Uploading Crash Report` | **Crash** section; native frames are kept and the last N lines before the crash are highlighted |
+| `Loading player data from …/X_Data/data.unity3d` or `Mono path[0] = '…/X_Data/Managed'` | Fact: game install folder |
+| `Direct3D:` (also `OpenGL:`, `Vulkan:`, `Metal:`) block: `Version`, `Renderer`, `VRAM`, `Driver` | Facts: graphics API, GPU, VRAM, driver |
+| `Begin MonoManager ReloadAssembly` → `- Completed reload, in X seconds` | Domain reload section nested in **Startup**, plus a **Startup** metric ("Scripts loaded in 8.14 s") |
+| `UnloadTime: X ms` | Unity prints this once a new scene has finished loading. It closes Startup and the previous scene, and opens a **Scene #n** section, plus a scene-unload metric. Player logs rarely name scenes, so sections are numbered. |
+| `Unloading N unused Assets to reduce memory usage. Loaded Objects now: M.` | **Memory** entry and metrics |
+| `message` + `(Filename: …/Debug.bindings.h Line: N)`, possibly with a `" "` line between them | A release-build `Debug.Log` without a stack trace: a **UserLog**, severity Info (the log does not say). `Debug.bindings.h` is not kept as a location. |
+| `message` + `(Filename: <engine path or empty> Line: N)` | A native engine message; the category stays Other |
+| `Exception: msg` + `  at Ns.Class.Method (…) [0x00046] in <hash>:0`, sometimes followed by Unity-format `Debug.LogException` frames | **Exception**. Release frames have no paths, so they are classified by namespace (known third-party prefixes such as `Steamworks.` count as packages). The frame `LogException` repeats is kept once. |
+| `Uploading Crash Report` | **Not a crash.** Unity Cloud Diagnostics is reporting the exception logged on the next line. Shown as "Exception reported to Unity Cloud Diagnostics". |
+| `Crash!!!` / `========== OUTPUTTING STACK TRACE` … `========== END OF STACKTRACE` | **Crash** section and entry. `0x… (Module) [file:line] Function` lines become native frames; `GameAssembly` (IL2CPP game code) frames count as user code. |
+| `Received signal SIGSEGV`, `Caught fatal signal`, `Native stacktrace:` + `#N 0x… in func` | **Crash** (Linux/Android style), with no end marker; capped at 400 lines |
+| `A crash has been intercepted by the crash handler…` + ` * <folder>` | Fact: crash report folder |
+
+Checked against 30 real Player logs (Unity 2019.4 to 6000.x builds): every file parses without errors, in 0.4 to 87 ms each. Native crash formats are covered by reconstructed fixtures, because none of the local logs contain one.
 
 ### 4.3 Stack trace readability
 - Classify each frame as **User** (`Assets/`), **Package** (`Packages/`, `Library/PackageCache`, and `Assets/Plugins/`, which usually holds third-party code), **Engine** (`UnityEngine.*`, `UnityEditor.*`, `System.*`) or **Native**. Frames without a path (release builds) are classified by namespace.
@@ -340,7 +352,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 | M0 | Scaffold: Cargo project, git init, design | Builds and opens in RustRover ✅ |
 | M1 | Workspace split, `comte-core` model and traits | Core types compile and are tested ✅ |
 | M2 | Unity Editor parser with timeline sections and frame classification | Snapshot tests cover §4.1 and §4.3 ✅ |
-| M3 | Unity Player parser (crash, device facts, exceptions, scene/memory) | Snapshot tests cover §4.2 |
+| M3 | Unity Player parser (crash, device facts, exceptions, scene/memory) | Snapshot tests cover §4.2 ✅ |
 | M4 | Locator, Player discovery and file-kind detection | Lists the real logs on this machine |
 | M5 | GUI viewer: sources, sections, list, filters, search, details, collapse, noise toggle | `Editor.log` reads clearly |
 | M6 | Save session: header, note, tags, redaction, reopen | Round trip keeps the note and tags; redaction tests pass |
@@ -362,6 +374,8 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 ## 13. Notes for later milestones
 - **M5 noise:** most engine lines in an Editor log are Info entries in categories such as System, Other and DomainReload. Besides hiding the noise categories, the "Show engine noise" toggle should also hide Info entries that are not UserLog.
 - **M6 redaction:** the real Editor log's `COMMAND LINE ARGUMENTS` block contains the full `-accessToken` value and `-hubSessionId`, so redaction must cover them.
+- **M5 culprit for release builds:** Player frames usually have no file path, so `culprit()` finds no location. The UI should fall back to showing the first user frame's name (for example `Gun.StopShooting()`).
+- **M8 insights:** the crash verdict can use the section tree directly. A Crash section nested in "Scene #3" means "crashed in scene #3".
 - **Compile metric:** this comes from Tundra's own duration. It can differ from the separate `AssetDatabase: script compilation time` line, which Unity sometimes prints before the compile starts.
 
 ## 14. Open questions (for later)

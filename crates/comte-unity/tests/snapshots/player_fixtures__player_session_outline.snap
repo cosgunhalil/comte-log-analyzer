@@ -1,0 +1,70 @@
+---
+source: crates/comte-unity/tests/player_fixtures.rs
+expression: "common::outline(&doc)"
+---
+== facts
+  Game: C:/Games/Sample Game  (L1)
+  Engine version: 2019.4.40f1  (L3)
+  Graphics API: Direct3D 11.0 [level 11.1]  (L7)
+  GPU: NVIDIA GeForce RTX 2070 Super  (L8)
+  VRAM: 8003 MB  (L10)
+  GPU driver: 31.0.15.3598  (L11)
+  Crash report: C:/Users/player/AppData/Local/Temp/Sample Studio/Sample Game/Crashes  (L90)
+== metrics
+  Startup: 8.14 s  (L13)
+  Scene unload: 9.5 ms  (L17)
+  Scene unload: 19 ms  (L34)
+  Unused assets unloaded: 3576  (L36)
+  Loaded objects: 261350  (L36)
+  Scene unload: 244 ms  (L62)
+== timeline  (90 lines, 25 entries, 4 errors, 1 warnings)
+▾ Startup [L1-16]  errors=0 warnings=0
+  · [Domain reload] L1-2 Mono path[0] = 'C:/Games/Sample Game/SampleGame_Data/Managed'  +1 lines
+  · [System] L3-3 Initialize engine version: 2019.4.40f1 (ffc62b691db5)
+  · [System] L4-4 [Subsystems] Discovering subsystems at path C:/Games/Sample Game/SampleGame_Data/UnitySubs…
+  · [Graphics] L5-5 GfxDevice: creating device client; threaded=1
+  · [Graphics] L6-11 Graphics: Direct3D 11.0 [level 11.1] on NVIDIA GeForce RTX 2070 Super  +5 lines
+  ▾ Domain reload [L12-13] 8.14 s  errors=0 warnings=0
+    · [Domain reload] L13-13 Scripts loaded in 8.14 s
+  · [Input] L14-16 <RI> Initializing input.  +2 lines (noise)
+▾ Scene #1 [L17-33]  errors=1 warnings=1
+  · [Scene load] L17-17 Scene #1 loaded (previous scene unloaded in 9.5 ms)
+  · [User log] L18-19 Odin Serializer ArchitectureInfo initialization with defaults (all unaligned read/writes d…
+  ⚠ [User log] L21-26 Platform: Steam client not running, falling back to offline profile
+      USER SteamPlatform.Awake()
+  ⛔ [Exception] L28-31 System.Exception: SteamApi_Init returned false. Steam isn't running, couldn't find Steam, …
+      pkg  SteamClient.Init(UInt32, Boolean)
+      USER SteamIntegration.Awake()
+  · [Memory] L33-33 Unloading 6 Unused Serialized files (Serialized files now loaded: 0) (noise)
+▾ Scene #2 [L34-61]  errors=1 warnings=0
+  · [Scene load] L34-34 Scene #2 loaded (previous scene unloaded in 19 ms)
+  · [Memory] L36-37 Unloaded 3576 unused assets; 261350 objects still loaded  +1 lines (noise)
+  · [Other] L39-40 [MultiplayerManager] Login session expired or expiring soon: requesting new token  +1 lines
+  · [System] L41-41 Exception reported to Unity Cloud Diagnostics
+  ⛔ [Exception] L42-56 ArgumentNullException: Value cannot be null.  +1 lines
+      | Parameter name: value
+      eng  BinaryWriter.Write(String)
+      USER BinaryExtensions.Write(BinaryWriter, LoginSession)
+      USER SavefileHelper.SaveLoginSession(LoginSession)
+      USER MultiplayerManager.LogOut()
+      USER RefreshSession(Exception) [lambda]
+      USER CreateRequestAndRetry() [async]
+      eng  SetupCoroutine.InvokeMoveNext(IEnumerator, IntPtr)
+  · [Other] L57-59 Curl error 42: Callback aborted
+  · [Memory] L61-61 Unloading 3 Unused Serialized files (Serialized files now loaded: 0) (noise)
+▾ Scene #3 [L62-90]  errors=2 warnings=0
+  · [Scene load] L62-62 Scene #3 loaded (previous scene unloaded in 244 ms)
+  · [System] L64-64 Exception reported to Unity Cloud Diagnostics
+  ⛔ [Exception] L65-70 NullReferenceException: Object reference not set to an instance of an object
+      USER Gun.StopShooting()
+      USER ShootingState.Exit()
+      USER PlayerController.OnDisable()
+  · [System] L72-74 Setting up 8 worker threads for Enlighten.  +2 lines
+  ▾ Crash [L75-90]  errors=1 warnings=0
+    💥 [Crash] L75-87 Native crash  +3 lines
+        USER SampleGame_Enemies_EnemySpawner_Spawn_m3F2A (GameAssembly)
+        nat  ScriptingInvocation::Invoke (UnityPlayer)  (C:/buildslave/unity/build/Runtime/Scripting/ScriptingInvocation.cpp:281)
+        nat  MonoBehaviour::CallUpdateMethod (UnityPlayer)  (C:/buildslave/unity/build/Runtime/Mono/MonoBehaviour.cpp:494)
+        nat  BaseThreadInitThunk (KERNEL32)
+        nat  RtlUserThreadStart (ntdll)
+    · [Crash] L89-90 Unity's crash handler wrote a crash report  +1 lines

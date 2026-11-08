@@ -1,4 +1,8 @@
-//! Streaming parser for Unity `Editor.log` (DESIGN §4.1).
+//! Streaming parser shared by Unity `Editor.log` (DESIGN §4.1) and
+//! `Player.log` (DESIGN §4.2). Both logs use the same building blocks
+//! (`Debug.Log` traces, Mono exceptions, `(Filename: …)` lines, memory and
+//! graphics blocks); a [`Flavor`] switches the rules that differ, such as
+//! play mode sessions (Editor) versus scene sections (Player).
 //!
 //! The parser keeps **one pending entry** open. Following lines either extend
 //! it (indented continuation lines, lines of the same "fold" group, stack
@@ -12,8 +16,8 @@
 use std::time::Duration;
 
 use comte_core::{
-    Category, Fact, FactKey, LogEntry, LogParser, Metric, MetricKind, ParseEvent, SectionKind,
-    SectionStart, Severity, SourceRef, format_duration,
+    Category, Fact, FactKey, FrameKind, LogEntry, LogParser, Metric, MetricKind, ParseEvent,
+    SectionKind, SectionStart, Severity, SourceRef, StackFrame, format_duration,
 };
 
 use crate::common::{
@@ -46,6 +50,22 @@ regex!(SCENE_OPENING = r"^Opening scene '(?P<scene>[^']+)'");
 regex!(SCENE_LOADED = r"^Loaded scene '(?P<scene>[^']+)'");
 regex!(SCENE_TOTAL = r"^\s*Total Operation Time:\s+(?P<ms>[\d.]+) ms");
 regex!(TAG = r"^\[(?P<tag>[A-Za-z][\w .-]*?)(?:::\w+)?\] ");
+regex!(ENGINE_VERSION = r"^Initialize engine version: (?P<version>\S+)");
+regex!(PLAYER_DATA = r"^Loading player data from (?P<path>.+?)/[^/]+_Data/data\.unity3d$");
+regex!(PLAYER_MONO_PATH = r"^Mono path\[0\] = '(?P<path>.+?)/[^/]+_Data/Managed'$");
+regex!(COMPLETED_RELOAD = r"^- Completed reload, in\s+(?P<secs>[\d.]+) seconds");
+regex!(UNLOAD_TIME = r"^UnloadTime: (?P<ms>[\d.]+) ms");
+regex!(
+    NATIVE_FRAME = r"^\s*0x[0-9A-Fa-f]+ \((?P<module>[^)]*)\)\s*(?:\[(?P<path>[^\]]*?):(?P<line>\d+)\]\s*)?(?P<func>.*)$"
+);
+regex!(POSIX_FRAME = r"^\s*#\d+\s+(?:pc\s+)?(?:0x)?[0-9a-fA-F]+\s+(?:in\s+)?(?P<func>.+)$");
+
+/// Which Unity program wrote the log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Flavor {
+    Editor,
+    Player,
+}
 
 /// Line prefixes → (category, fold group). Consecutive lines of the same fold
 /// group merge into one entry, so e.g. 40 licensing lines read as one row.
@@ -61,6 +81,8 @@ const PREFIXES: &[(&str, Category, &str)] = &[
     ("<RI>", Category::Input, "input"),
     ("Input System", Category::Input, "input"),
     ("This project uses Input Manager", Category::Input, "input"),
+    ("New input system", Category::Input, "input"),
+    ("Setting up ", Category::System, "threads"),
     ("[Physics::", Category::System, "physics"),
     ("[LAYOUT]", Category::System, "layout"),
     ("[MODES]", Category::System, "modes"),
@@ -137,6 +159,8 @@ enum Mode {
     Stack { frames: bool, blank: bool },
     /// The `COMMAND LINE ARGUMENTS:` block (arguments are not indented).
     CommandLine,
+    /// A native crash: everything up to `END OF STACKTRACE` belongs to it.
+    Crash,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,7 +168,11 @@ enum Block {
     None,
     Graphics,
     SceneLoad,
+    CrashReport,
 }
+
+/// Most lines a native crash entry absorbs when the log has no end marker.
+const MAX_CRASH_LINES: usize = 400;
 
 #[derive(Debug)]
 struct Pending {
@@ -157,6 +185,9 @@ struct Pending {
     block: Block,
     gfx_api: Option<String>,
     gfx_gpu: Option<String>,
+    /// A blank line followed this (plain) entry. Only `(Filename: …)` may
+    /// still attach to it: release Player logs write `message`, ` `, `(Filename: …)`.
+    after_blank: bool,
 }
 
 impl Pending {
@@ -169,6 +200,7 @@ impl Pending {
             block: Block::None,
             gfx_api: None,
             gfx_gpu: None,
+            after_blank: false,
         }
     }
 
@@ -205,21 +237,38 @@ fn info(category: Category, message: impl Into<String>, n: usize) -> LogEntry {
     entry(Severity::Info, category, message, n)
 }
 
-/// Streaming parser for Unity Editor logs. Feed it with
-/// [`comte_core::parse_file`] or line by line for live tail.
-#[derive(Debug, Default)]
-pub struct EditorParser {
+/// The shared Unity parser. Use [`EditorParser`] or [`PlayerParser`].
+#[derive(Debug)]
+pub struct UnityParser {
+    flavor: Flavor,
     pending: Option<Pending>,
     open: Vec<SectionKind>,
     play_mode_count: u32,
     /// The enter-time backup scene load of the current play session was seen.
     play_scene_loaded: bool,
+    scene_count: u32,
     started: bool,
 }
 
-impl EditorParser {
-    pub fn new() -> Self {
-        Self::default()
+impl UnityParser {
+    pub fn new(flavor: Flavor) -> Self {
+        Self {
+            flavor,
+            pending: None,
+            open: Vec::new(),
+            play_mode_count: 0,
+            play_scene_loaded: false,
+            scene_count: 0,
+            started: false,
+        }
+    }
+
+    pub fn flavor(&self) -> Flavor {
+        self.flavor
+    }
+
+    fn is_player(&self) -> bool {
+        self.flavor == Flavor::Player
     }
 
     // -- sections -----------------------------------------------------------
@@ -331,8 +380,20 @@ impl EditorParser {
             return false;
         };
 
-        if let Some(source) = parse_filename_line(text) {
-            if p.entry.source.is_none() {
+        if p.mode != Mode::Crash
+            && let Some(source) = parse_filename_line(text)
+        {
+            // Release builds without stack traces log `message` +
+            // `(Filename: …/Debug.bindings.h Line: N)`: that is a Debug.Log call.
+            let from_debug_log = source
+                .as_ref()
+                .is_some_and(|s| s.path.ends_with("Debug.bindings.h"));
+            if from_debug_log && p.entry.category == Category::Other {
+                p.entry.category = Category::UserLog;
+            }
+            // `Debug.bindings.h` is where every release-build Debug.Log ends up;
+            // as a location it says nothing, so it is not kept.
+            if p.entry.source.is_none() && !from_debug_log {
                 p.entry.source = source;
             }
             p.absorb(n);
@@ -341,6 +402,23 @@ impl EditorParser {
         }
 
         match p.mode {
+            Mode::Crash => {
+                if text.starts_with("========== END OF STACKTRACE") {
+                    p.absorb(n);
+                    self.flush(out);
+                    return true;
+                }
+                if p.entry.line_count() >= MAX_CRASH_LINES {
+                    return false;
+                }
+                if let Some(frame) = native_frame(text) {
+                    p.entry.stack.push(frame);
+                } else if !text.starts_with("==========") {
+                    p.entry.details.push(text.trim().to_owned());
+                }
+                p.absorb(n);
+                true
+            }
             Mode::Stack { frames, blank } => {
                 if blank {
                     return false;
@@ -380,6 +458,9 @@ impl EditorParser {
                 true
             }
             Mode::Plain => {
+                if p.after_blank {
+                    return false;
+                }
                 if text.starts_with([' ', '\t']) {
                     match p.block {
                         Block::Graphics => {
@@ -408,6 +489,15 @@ impl EditorParser {
                                     .push_str(&format!(" in {}", format_duration(d)));
                             }
                         }
+                        Block::CrashReport => {
+                            if let Some(folder) = text.trim().strip_prefix("* ") {
+                                out.push(ParseEvent::Fact(Fact::new(
+                                    FactKey::CrashReport,
+                                    folder.trim(),
+                                    n,
+                                )));
+                            }
+                        }
                         Block::None => {}
                     }
                     p.entry.details.push(text.trim().to_owned());
@@ -416,7 +506,7 @@ impl EditorParser {
                 }
                 // Lines with their own meaning (metrics, rewritten messages) are
                 // never swallowed by a fold group.
-                let structural = parse_unloading(text, n).is_some();
+                let structural = is_structural(text, n);
                 let same_fold = !structural
                     && p.fold
                         .as_deref()
@@ -442,6 +532,8 @@ impl EditorParser {
                 }
                 p.absorb(n);
             }
+            Some(p) if p.mode == Mode::Crash => p.absorb(n),
+            Some(p) if p.mode == Mode::Plain && !p.after_blank => p.after_blank = true,
             Some(_) => self.flush(out),
             None => {}
         }
@@ -501,15 +593,87 @@ impl EditorParser {
             return;
         }
 
-        if text.starts_with("Crash!!!")
-            || text.starts_with("Received signal")
-            || text.starts_with("========== OUTPUTTING STACK TRACE")
-        {
+        if let Some(message) = crash_start(text) {
             self.flush(out);
             if !self.is_open(SectionKind::Crash) {
                 self.open_section(SectionKind::Crash, "Crash".into(), n, out);
             }
-            self.emit(entry(Severity::Crash, Category::Crash, text, n), out);
+            let e = entry(Severity::Crash, Category::Crash, message, n);
+            self.start(Pending::new(e).mode(Mode::Crash), out);
+            return;
+        }
+
+        if text.starts_with("A crash has been intercepted by the crash handler") {
+            let e = info(
+                Category::Crash,
+                "Unity's crash handler wrote a crash report",
+                n,
+            );
+            self.start(Pending::new(e).block(Block::CrashReport), out);
+            return;
+        }
+
+        if text == "Uploading Crash Report" {
+            // Despite the wording this is Unity Cloud Diagnostics reporting the
+            // exception logged right after it, not a crash.
+            let e = info(
+                Category::System,
+                "Exception reported to Unity Cloud Diagnostics",
+                n,
+            );
+            self.emit(e, out);
+            return;
+        }
+
+        if let Some(d) = COMPLETED_RELOAD
+            .captures(text)
+            .and_then(|c| secs(&c["secs"]))
+        {
+            self.flush(out);
+            let (kind, message) = if self.is_player() {
+                (
+                    MetricKind::Startup,
+                    format!("Scripts loaded in {}", format_duration(d)),
+                )
+            } else {
+                (
+                    MetricKind::DomainReload,
+                    format!("Domain reload took {}", format_duration(d)),
+                )
+            };
+            out.push(ParseEvent::Metric(Metric::duration(kind, d, n)));
+            let e = info(Category::DomainReload, message, n);
+            self.start(
+                Pending::new(e).closing(SectionKind::DomainReload, Some(d)),
+                out,
+            );
+            return;
+        }
+
+        if let Some(d) = UNLOAD_TIME.captures(text).and_then(|c| millis(&c["ms"])) {
+            self.flush(out);
+            out.push(ParseEvent::Metric(Metric::duration(
+                MetricKind::SceneUnload,
+                d,
+                n,
+            )));
+            let message = if self.is_player() {
+                // Unity prints UnloadTime once a new scene finished loading:
+                // each one starts a scene section in the Player timeline.
+                let before = n.saturating_sub(1);
+                self.close_section(SectionKind::SceneLoad, before, None, out);
+                self.close_section(SectionKind::Startup, before, None, out);
+                self.scene_count += 1;
+                let k = self.scene_count;
+                self.open_section(SectionKind::SceneLoad, format!("Scene #{k}"), n, out);
+                format!(
+                    "Scene #{k} loaded (previous scene unloaded in {})",
+                    format_duration(d)
+                )
+            } else {
+                format!("Scene unloaded in {}", format_duration(d))
+            };
+            self.emit(info(Category::SceneLoad, message, n), out);
             return;
         }
 
@@ -766,7 +930,7 @@ impl EditorParser {
             let e = info(Category::System, "Command line arguments", n);
             self.start(Pending::new(e).mode(Mode::CommandLine), out);
             return;
-        } else if text == "Direct3D:" {
+        } else if matches!(text, "Direct3D:" | "OpenGL:" | "Vulkan:" | "Metal:") {
             let e = info(Category::Graphics, "Graphics device", n);
             self.start(Pending::new(e).block(Block::Graphics), out);
             return;
@@ -780,6 +944,25 @@ impl EditorParser {
     fn scan_facts(&mut self, n: usize, text: &str, out: &mut Vec<ParseEvent>) {
         if n > 200 {
             return; // header facts only appear at the top of the log
+        }
+        if self.is_player() {
+            if let Some(c) = ENGINE_VERSION.captures(text) {
+                out.push(ParseEvent::Fact(Fact::new(
+                    FactKey::EngineVersion,
+                    &c["version"],
+                    n,
+                )));
+            } else if let Some(c) = PLAYER_DATA
+                .captures(text)
+                .or_else(|| PLAYER_MONO_PATH.captures(text))
+            {
+                out.push(ParseEvent::Fact(Fact::new(
+                    FactKey::GamePath,
+                    &c["path"],
+                    n,
+                )));
+            }
+            return;
         }
         if let Some(c) = BUILT_FROM.captures(text) {
             out.push(ParseEvent::Fact(Fact::new(
@@ -832,7 +1015,7 @@ impl EditorParser {
     }
 }
 
-impl LogParser for EditorParser {
+impl LogParser for UnityParser {
     fn feed_line(&mut self, line_no: usize, line: &str, out: &mut Vec<ParseEvent>) {
         if !self.started {
             self.started = true;
@@ -861,6 +1044,100 @@ impl LogParser for EditorParser {
     }
 }
 
+macro_rules! flavored_parser {
+    ($(#[$doc:meta])* $name:ident => $flavor:expr) => {
+        $(#[$doc])*
+        #[derive(Debug)]
+        pub struct $name(UnityParser);
+
+        impl $name {
+            pub fn new() -> Self {
+                Self(UnityParser::new($flavor))
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
+        impl LogParser for $name {
+            fn feed_line(&mut self, line_no: usize, line: &str, out: &mut Vec<ParseEvent>) {
+                self.0.feed_line(line_no, line, out);
+            }
+
+            fn finish(&mut self, out: &mut Vec<ParseEvent>) {
+                self.0.finish(out);
+            }
+        }
+    };
+}
+
+flavored_parser!(
+    /// Streaming parser for `Editor.log` / `Editor-prev.log`. Feed it with
+    /// [`comte_core::parse_file`] or line by line for live tail.
+    EditorParser => Flavor::Editor
+);
+
+flavored_parser!(
+    /// Streaming parser for `Player.log` / `Player-prev.log` of built games.
+    PlayerParser => Flavor::Player
+);
+
+/// `Crash!!!`, `Received signal SIGSEGV`, … → the crash entry's message.
+fn crash_start(text: &str) -> Option<String> {
+    if text.starts_with("Crash!!!") || text.starts_with("========== OUTPUTTING STACK TRACE") {
+        Some("Native crash".to_owned())
+    } else if text.starts_with("Received signal")
+        || text.starts_with("Caught fatal signal")
+        || text.starts_with("Native stacktrace:")
+    {
+        Some(format!("Native crash: {text}"))
+    } else {
+        None
+    }
+}
+
+/// A native crash frame:
+/// `0x00007FF6A1B2C3D4 (UnityPlayer) [C:\…\File.cpp:123] Function` (Windows) or
+/// `#3  0x7f12345678 in Function` (Linux / Android).
+///
+/// Frames from `GameAssembly` (IL2CPP-compiled game code) count as user code.
+fn native_frame(text: &str) -> Option<StackFrame> {
+    if let Some(c) = NATIVE_FRAME.captures(text) {
+        let module = c["module"].trim();
+        let func = c["func"].trim();
+        let label = if func.is_empty() {
+            module.to_owned()
+        } else {
+            format!("{func} ({module})")
+        };
+        let kind = if module.eq_ignore_ascii_case("GameAssembly") {
+            FrameKind::User
+        } else {
+            FrameKind::Native
+        };
+        let mut frame = StackFrame::new(label, kind).with_raw(text.trim());
+        if let Some(path) = c.name("path") {
+            let mut location = SourceRef::new(path.as_str().replace('\\', "/"));
+            if let Some(line) = c.name("line").and_then(|l| l.as_str().parse().ok()) {
+                location = location.with_line(line);
+            }
+            frame.location = Some(location);
+        }
+        return Some(frame);
+    }
+    POSIX_FRAME
+        .captures(text)
+        .map(|c| StackFrame::new(c["func"].trim(), FrameKind::Native).with_raw(text.trim()))
+}
+
+/// Lines that carry their own meaning and must not be swallowed by a fold group.
+fn is_structural(text: &str, n: usize) -> bool {
+    parse_unloading(text, n).is_some() || COMPLETED_RELOAD.is_match(text)
+}
+
 /// Adds a parsed frame to an entry, or reads the severity from logging
 /// plumbing frames (`UnityEngine.Debug:LogWarning`) and drops them.
 fn apply_frame(entry: &mut LogEntry, frame: ParsedFrame) {
@@ -873,6 +1150,15 @@ fn apply_frame(entry: &mut LogEntry, frame: ParsedFrame) {
                 entry.category = Category::Exception;
             }
         }
+        return;
+    }
+    // `Debug.LogException` repeats the exception's top frame in Unity's own
+    // format right after the Mono frames; keep it once.
+    if entry
+        .stack
+        .last()
+        .is_some_and(|last| last.text == frame.frame.text && last.location == frame.frame.location)
+    {
         return;
     }
     entry.stack.push(frame.frame);
@@ -907,7 +1193,7 @@ fn graphics_message(api: Option<&str>, gpu: Option<&str>) -> String {
 mod tests {
     use std::io::Cursor;
 
-    use comte_core::{FrameKind, LogDocument, parse_reader};
+    use comte_core::{LogDocument, parse_reader};
 
     use super::*;
 
