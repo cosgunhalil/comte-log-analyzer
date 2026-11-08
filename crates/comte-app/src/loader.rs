@@ -7,7 +7,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use comte_core::{
-    DETECT_LINES, LogDocument, LogParser, PlainTextParser, detect_engine, parse_reader,
+    DETECT_LINES, EngineId, LogDocument, LogKind, LogParser, PlainTextParser, SessionHeader,
+    detect_engine, parse_header, parse_kind_token, parse_reader,
 };
 
 use crate::engines::engines;
@@ -20,9 +21,14 @@ pub struct Loaded {
     pub title: String,
     /// "Unity Editor", "Unity Player" or "Plain text".
     pub kind_label: String,
+    /// Engine and log kind, when an engine recognized the log.
+    pub kind: Option<(EngineId, LogKind)>,
+    /// Header of a saved session (note, tags, …) when this file is one.
+    pub session: Option<SessionHeader>,
     pub doc: LogDocument,
     pub index: DocIndex,
-    /// The original lines (lossy UTF-8), for the "raw lines" view.
+    /// The log's lines (lossy UTF-8) without any session header; line `n`
+    /// of the document is `raw[n - 1]`.
     pub raw: Vec<String>,
     pub elapsed: Duration,
 }
@@ -36,30 +42,60 @@ impl Loaded {
     }
 }
 
-/// Reads, detects and parses a log synchronously.
+/// Reads, detects and parses a log (or a saved session) synchronously.
 pub fn load(path: &Path, title: &str) -> io::Result<Loaded> {
     let started = Instant::now();
     let bytes = std::fs::read(path)?;
     let text = String::from_utf8_lossy(&bytes);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    let raw: Vec<String> = text.lines().map(str::to_owned).collect();
+    let mut raw: Vec<String> = text.lines().map(str::to_owned).collect();
 
-    let head: Vec<&str> = raw.iter().take(DETECT_LINES).map(String::as_str).collect();
+    // A saved session: drop its header; the body is an ordinary log.
+    let session = parse_header(&raw).map(|(header, body_start)| {
+        raw.drain(..body_start);
+        header
+    });
+
     let engines = engines();
-    let (mut parser, kind_label): (Box<dyn LogParser>, String) =
-        match detect_engine(&engines, &head) {
-            Some((engine, kind)) => (
-                engine.new_parser(kind),
-                format!("{} {}", engine.id(), kind.label()),
-            ),
-            None => (Box::new(PlainTextParser), "Plain text".to_owned()),
-        };
-    let doc = parse_reader(Cursor::new(&bytes), parser.as_mut())?;
+    // A session says which parser reads its body; anything else is detected.
+    let from_header = session
+        .as_ref()
+        .and_then(|s| parse_kind_token(&s.kind))
+        .and_then(|(id, kind)| {
+            engines
+                .iter()
+                .find(|e| e.id() == id)
+                .map(|e| (e.as_ref(), kind))
+        });
+    let head: Vec<&str> = raw.iter().take(DETECT_LINES).map(String::as_str).collect();
+    let detected = from_header.or_else(|| detect_engine(&engines, &head));
+    let (mut parser, kind_label): (Box<dyn LogParser>, String) = match detected {
+        Some((engine, kind)) => (
+            engine.new_parser(kind),
+            format!("{} {}", engine.id(), kind.label()),
+        ),
+        None => (Box::new(PlainTextParser), "Plain text".to_owned()),
+    };
+    let kind = detected.map(|(engine, kind)| (engine.id(), kind));
+
+    let doc = if session.is_some() {
+        let body = raw.join("\n");
+        parse_reader(Cursor::new(body.as_bytes()), parser.as_mut())?
+    } else {
+        parse_reader(Cursor::new(&bytes), parser.as_mut())?
+    };
     let index = DocIndex::new(&doc);
+    let kind_label = if session.is_some() {
+        format!("{kind_label} · saved session")
+    } else {
+        kind_label
+    };
     Ok(Loaded {
         path: path.to_owned(),
         title: title.to_owned(),
         kind_label,
+        kind,
+        session,
         doc,
         index,
         raw,

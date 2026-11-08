@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use comte_core::{
     Category, FrameKind, LogEntry, LogKind, LogSource, Section, Severity, SourceRole,
@@ -24,6 +25,10 @@ use crate::cli::{age, human_size};
 use crate::devtools::DevHooks;
 use crate::engines::discover_sources;
 use crate::loader::{LoadEvent, Loaded, Loader};
+use crate::save::{
+    self, ContentChoice, Prepared, SaveRequest, SessionFile, current_user_name, default_dir,
+    default_file_name, discover_sessions, visible_lines,
+};
 use crate::theme::{severity_color, severity_icon};
 use crate::view::{
     Filter, Row, build_rows, culprit_label, default_collapsed, find_problem, row_of_entry,
@@ -45,8 +50,27 @@ pub struct ComteApp {
     selected: Option<u64>,
     scroll_to_selected: bool,
     focus_search: bool,
+    save_dialog: Option<SaveDialog>,
+    /// "Also redact" words, kept between saves.
+    extra_redactions: String,
+    sessions: Vec<SessionFile>,
+    /// A short-lived message for the status bar ("Saved to …").
+    notice: Option<(String, Instant)>,
     dev: DevHooks,
 }
+
+/// State of the "Save session" dialog.
+struct SaveDialog {
+    request: SaveRequest,
+    preview: Prepared,
+    /// Inputs the preview was computed from; recomputed when they change.
+    preview_inputs: (ContentChoice, bool, String),
+    full_lines: usize,
+    visible_lines: usize,
+    error: Option<String>,
+}
+
+const NOTICE_SECONDS: u64 = 8;
 
 impl ComteApp {
     pub fn new(cc: &eframe::CreationContext<'_>, open: Option<PathBuf>) -> Self {
@@ -70,6 +94,10 @@ impl ComteApp {
             selected: None,
             scroll_to_selected: false,
             focus_search: false,
+            save_dialog: None,
+            extra_redactions: String::new(),
+            sessions: discover_sessions(&default_dir()),
+            notice: None,
             dev,
         };
         // Open what was asked for, or the Editor log: reading it is the main job.
@@ -109,6 +137,221 @@ impl ComteApp {
         }
     }
 
+    // -- saving ---------------------------------------------------------------
+
+    fn open_save_dialog(&mut self) {
+        let Some(current) = &self.current else {
+            return;
+        };
+        // Saving a reopened session again keeps its note and tags.
+        let mut request = match &current.session {
+            Some(session) => SaveRequest {
+                note: session.note.clone(),
+                tags: session.tags.join(", "),
+                ..SaveRequest::default()
+            },
+            None => SaveRequest::default(),
+        };
+        if let Some(note) = &self.dev.save_note {
+            request.note.clone_from(note);
+        }
+        if let Some(tags) = &self.dev.save_tags {
+            request.tags.clone_from(tags);
+        }
+        if let Some(extra) = &self.dev.save_extra {
+            self.extra_redactions.clone_from(extra);
+        }
+        self.save_dialog = Some(self.new_save_dialog(request));
+        if let Some(path) = self.dev.save_to.take() {
+            self.write_session(path);
+        }
+    }
+
+    fn write_session(&mut self, path: PathBuf) {
+        let Some(dialog) = &self.save_dialog else {
+            return;
+        };
+        // Recompute so the timestamp is the moment of saving.
+        let prepared = self.prepare(&dialog.request);
+        match save::write(&path, &prepared) {
+            Ok(()) => {
+                self.notice = Some((
+                    format!("Saved session to {}", path.display()),
+                    Instant::now(),
+                ));
+                self.save_dialog = None;
+                self.sessions = discover_sessions(&default_dir());
+            }
+            Err(err) => {
+                if let Some(dialog) = &mut self.save_dialog {
+                    dialog.error = Some(format!("Could not save: {err}"));
+                }
+            }
+        }
+    }
+
+    fn new_save_dialog(&self, request: SaveRequest) -> SaveDialog {
+        let current = self.current.as_ref().expect("a log is open");
+        let preview = self.prepare(&request);
+        SaveDialog {
+            preview_inputs: (
+                request.content,
+                request.redact,
+                self.extra_redactions.clone(),
+            ),
+            full_lines: current.raw.len(),
+            visible_lines: visible_lines(current, &self.filter).len(),
+            request,
+            preview,
+            error: None,
+        }
+    }
+
+    fn prepare(&self, request: &SaveRequest) -> Prepared {
+        let current = self.current.as_ref().expect("a log is open");
+        let user = current_user_name();
+        let mut names: Vec<&str> = user.iter().map(String::as_str).collect();
+        names.extend(
+            self.extra_redactions
+                .split(',')
+                .map(str::trim)
+                .filter(|w| !w.is_empty()),
+        );
+        let saved_at = chrono::Local::now()
+            .format("%Y-%m-%dT%H:%M:%S%:z")
+            .to_string();
+        save::prepare(current, &self.filter, request, saved_at, &names)
+    }
+
+    /// Asks where to save, then writes the session file.
+    fn save_to_file(&mut self) {
+        let (Some(current), Some(dialog)) = (&self.current, &self.save_dialog) else {
+            return;
+        };
+        let title = current
+            .session
+            .as_ref()
+            .map_or(current.title.as_str(), |s| s.source.as_str());
+        let name = default_file_name(title, &chrono::Local::now());
+        let dir = default_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = dialog;
+        if let Some(path) = rfd::FileDialog::new()
+            .set_title("Save session")
+            .set_directory(&dir)
+            .set_file_name(&name)
+            .add_filter("Log files", &["log"])
+            .save_file()
+        {
+            self.write_session(path);
+        } // cancelled: keep the dialog open
+    }
+
+    fn save_dialog_ui(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.save_dialog else {
+            return;
+        };
+        let mut save_clicked = false;
+        let mut cancel = false;
+        let extra = &mut self.extra_redactions;
+        let response = egui::Modal::new(egui::Id::unique("save-session")).show(ctx, |ui| {
+            ui.set_width(560.0);
+            ui.heading("Save session");
+            ui.label(
+                RichText::new("Writes a plain .log file: a header with your note and tags, then the log lines.")
+                    .weak(),
+            );
+            ui.add_space(8.0);
+
+            ui.label(RichText::new("Note").strong());
+            ui.add(
+                egui::TextEdit::multiline(&mut dialog.request.note)
+                    .hint_text("What happened? How can someone reproduce it?")
+                    .desired_rows(5)
+                    .desired_width(f32::INFINITY),
+            );
+            ui.add_space(6.0);
+            ui.label(RichText::new("Tags").strong());
+            ui.add(
+                egui::TextEdit::singleline(&mut dialog.request.tags)
+                    .hint_text("crash, perf, build 1.2.3")
+                    .desired_width(f32::INFINITY),
+            );
+
+            ui.add_space(10.0);
+            ui.label(RichText::new("Content").strong());
+            ui.radio_value(
+                &mut dialog.request.content,
+                ContentChoice::Full,
+                format!("Whole log ({} lines)", dialog.full_lines),
+            );
+            ui.radio_value(
+                &mut dialog.request.content,
+                ContentChoice::Visible,
+                format!("Only entries matching the current filters ({} lines)", dialog.visible_lines),
+            );
+
+            ui.add_space(10.0);
+            ui.checkbox(&mut dialog.request.redact, RichText::new("Redact sensitive values").strong())
+                .on_hover_text("User names, tokens, licensing ids, player names and ids, emails, IPs, machine names");
+            ui.add_enabled_ui(dialog.request.redact, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Also redact:");
+                    ui.add(
+                        egui::TextEdit::singleline(extra)
+                            .hint_text("your display name, studio name, …")
+                            .desired_width(f32::INFINITY),
+                    );
+                });
+                if let Some(report) = &dialog.preview.report {
+                    let text = if report.total == 0 {
+                        "Nothing sensitive found.".to_owned()
+                    } else {
+                        format!("{} values will be replaced: {}.", report.total, report.describe())
+                    };
+                    ui.label(RichText::new(text).weak());
+                }
+            });
+
+            if let Some(error) = &dialog.error {
+                ui.add_space(6.0);
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            }
+
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("💾 Save…").strong()).clicked() {
+                    save_clicked = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+                ui.label(RichText::new(format!("to {}", default_dir().display())).weak().small());
+            });
+        });
+        if response.should_close() || cancel {
+            self.save_dialog = None;
+            return;
+        }
+        // Keep the redaction preview in step with the choices.
+        let inputs = (
+            dialog.request.content,
+            dialog.request.redact,
+            self.extra_redactions.clone(),
+        );
+        if inputs != dialog.preview_inputs {
+            let request = dialog.request.clone();
+            let preview = self.prepare(&request);
+            if let Some(dialog) = &mut self.save_dialog {
+                dialog.preview = preview;
+                dialog.preview_inputs = inputs;
+            }
+        }
+        if save_clicked {
+            self.save_to_file();
+        }
+    }
+
     fn reload(&mut self, ctx: &egui::Context) {
         if let Some(current) = &self.current {
             let (path, title) = (current.path.clone(), current.title.clone());
@@ -131,6 +374,9 @@ impl ComteApp {
                 if self.dev.select_problem {
                     self.rebuild_rows();
                     self.jump_to_problem(true);
+                }
+                if self.dev.open_save {
+                    self.open_save_dialog();
                 }
             }
             LoadEvent::Failed { path, error } => {
@@ -197,6 +443,13 @@ impl ComteApp {
     // -- input ----------------------------------------------------------------
 
     fn handle_input(&mut self, ctx: &egui::Context) {
+        if self.save_dialog.is_some() {
+            return; // the dialog owns the keyboard (Esc closes it)
+        }
+        let save = ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::S));
+        if save {
+            self.open_save_dialog();
+        }
         let (open, reload, find, next, prev, escape, down, up) = ctx.input_mut(|i| {
             (
                 i.consume_key(Modifiers::COMMAND, Key::O),
@@ -272,6 +525,13 @@ impl ComteApp {
             {
                 self.reload(ui.ctx());
             }
+            if ui
+                .add_enabled(can_reload, egui::Button::new("💾 Save session…"))
+                .on_hover_text("Save this log with a note and tags (Ctrl+S)")
+                .clicked()
+            {
+                self.open_save_dialog();
+            }
             ui.separator();
             match &self.current {
                 Some(c) => {
@@ -292,6 +552,13 @@ impl ComteApp {
         ui.horizontal(|ui| {
             if let Some(error) = &self.load_error {
                 ui.colored_label(ui.visuals().error_fg_color, error);
+                return;
+            }
+            if let Some((notice, at)) = &self.notice
+                && at.elapsed() < Duration::from_secs(NOTICE_SECONDS)
+            {
+                ui.label(RichText::new(format!("✔ {notice}")).strong());
+                ui.ctx().request_repaint_after(Duration::from_secs(1));
                 return;
             }
             if let Some(path) = self.loader.pending() {
@@ -384,6 +651,31 @@ impl ComteApp {
                     let _ = ui.add(egui::Button::selectable(true, &c.title).truncate());
                     ui.add_space(8.0);
                 }
+
+                ui.label(RichText::new("SAVED SESSIONS").small().strong().weak());
+                if self.sessions.is_empty() {
+                    ui.label(
+                        RichText::new("none yet (Ctrl+S saves one)")
+                            .weak()
+                            .italics(),
+                    );
+                }
+                for session in &self.sessions {
+                    let selected = current_path.as_deref() == Some(session.path.as_path());
+                    let response =
+                        ui.add(egui::Button::selectable(selected, &session.title).truncate());
+                    let mut tip = session.path.display().to_string();
+                    if !session.tags.is_empty() {
+                        tip.push_str(&format!("\ntags: {}", session.tags.join(", ")));
+                    }
+                    if let Some(first) = session.note.lines().next() {
+                        tip.push_str(&format!("\n{first}"));
+                    }
+                    if response.on_hover_text(tip).clicked() {
+                        to_open = Some((session.path.clone(), session.title.clone()));
+                    }
+                }
+                ui.add_space(8.0);
 
                 if ui.button("📂 Open file…").clicked() {
                     self.open_dialog(ui.ctx());
@@ -668,6 +960,7 @@ impl eframe::App for ComteApp {
         if self.filter != filter_before || self.rows_dirty {
             self.rebuild_rows();
         }
+        self.save_dialog_ui(&ctx);
         self.drop_overlay(&ctx);
         self.dev.after_frame(
             &ctx,
@@ -981,7 +1274,55 @@ fn stack_trace(ui: &mut Ui, entry: &LogEntry) {
 }
 
 /// Shown when no entry is selected: what this log is about.
+/// Note, tags and origin of a reopened saved session.
+fn session_card(ui: &mut Ui, session: &comte_core::SessionHeader) {
+    egui::Frame::group(ui.style())
+        .fill(ui.visuals().faint_bg_color)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new("📝 Saved session").strong());
+            if !session.tags.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    for tag in &session.tags {
+                        egui::Frame::new()
+                            .fill(ui.visuals().selection.bg_fill)
+                            .corner_radius(8.0)
+                            .inner_margin(egui::Margin::symmetric(8, 2))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(tag).small().strong());
+                            });
+                    }
+                });
+            }
+            if !session.note.is_empty() {
+                ui.add_space(4.0);
+                ui.label(&session.note);
+            }
+            ui.add_space(4.0);
+            let content = match &session.content {
+                comte_core::SessionContent::Full => "whole log".to_owned(),
+                comte_core::SessionContent::Filtered(d) => format!("filtered: {d}"),
+            };
+            let redacted = match session.redacted {
+                Some(n) => format!("redacted ({n} values)"),
+                None => "not redacted".to_owned(),
+            };
+            ui.label(
+                RichText::new(format!(
+                    "From {} · saved {}\n{content} · {redacted}",
+                    session.source, session.saved_at
+                ))
+                .weak()
+                .small(),
+            );
+        });
+    ui.add_space(10.0);
+}
+
 fn info_card(ui: &mut Ui, current: &Loaded) {
+    if let Some(session) = &current.session {
+        session_card(ui, session);
+    }
     ui.label(RichText::new(&current.title).size(17.0).strong());
     ui.label(
         RichText::new(format!(

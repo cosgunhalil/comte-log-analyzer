@@ -11,8 +11,10 @@ name = "comte-logger"
 path = "src/main.rs"
 
 [dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 comte-core.workspace = true
 comte-unity.workspace = true
+directories = "6.0.0"
 eframe = "0.37"
 png = "0.18"
 rfd = "0.18"

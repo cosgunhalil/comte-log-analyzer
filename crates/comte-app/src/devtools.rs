@@ -6,6 +6,9 @@
 //! - `COMTE_SELECT=problem`: select the first warning or error after loading.
 //! - `COMTE_SEARCH=text`: start with this search text.
 //! - `COMTE_NOISE=1`: start with engine noise shown.
+//! - `COMTE_OPEN_SAVE=1`: open the "Save session" dialog after loading, with
+//!   `COMTE_SAVE_NOTE`, `COMTE_SAVE_TAGS` and `COMTE_SAVE_EXTRA` ("Also redact") prefilled.
+//! - `COMTE_SAVE_TO=file.log`: save the session there right away (no file dialog).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,12 +19,17 @@ use eframe::egui::{self, ColorImage};
 #[derive(Debug, Default)]
 pub struct DevHooks {
     screenshot: Option<PathBuf>,
-    frames_since_load: u32,
+    loaded_at: Option<std::time::Instant>,
     requested: bool,
     done: Arc<AtomicBool>,
     pub select_problem: bool,
     pub search: Option<String>,
     pub show_noise: bool,
+    pub open_save: bool,
+    pub save_note: Option<String>,
+    pub save_tags: Option<String>,
+    pub save_extra: Option<String>,
+    pub save_to: Option<PathBuf>,
 }
 
 impl DevHooks {
@@ -32,6 +40,13 @@ impl DevHooks {
             select_problem: var("COMTE_SELECT").as_deref() == Some("problem"),
             search: var("COMTE_SEARCH"),
             show_noise: var("COMTE_NOISE").as_deref() == Some("1"),
+            open_save: var("COMTE_OPEN_SAVE").as_deref() == Some("1")
+                || var("COMTE_SAVE_TO").is_some(),
+            // A literal `\n` in the variable starts a new note line.
+            save_note: var("COMTE_SAVE_NOTE").map(|n| n.replace("\\n", "\n")),
+            save_tags: var("COMTE_SAVE_TAGS"),
+            save_extra: var("COMTE_SAVE_EXTRA"),
+            save_to: var("COMTE_SAVE_TO").map(PathBuf::from),
             ..Self::default()
         }
     }
@@ -49,9 +64,9 @@ impl DevHooks {
         if !loaded {
             return;
         }
-        self.frames_since_load += 1;
-        // A few frames let layout settle (panel sizes, scroll positions).
-        if self.frames_since_load >= 5 && !self.requested {
+        let loaded_at = *self.loaded_at.get_or_insert_with(std::time::Instant::now);
+        // Let layout settle and animations (dialog fade-in) finish.
+        if loaded_at.elapsed() >= std::time::Duration::from_millis(1200) && !self.requested {
             self.requested = true;
             let done = Arc::clone(&self.done);
             ctx.request_screenshot(move |image| {

@@ -250,15 +250,19 @@ Computed after parsing:
 # redacted:      yes
 # tags:          crash, steam, build-1.2.3
 # --- note -----------------------------------------------------
-# Crashes when Steam is not running. Repro: start the game from
-# the Epic launcher with Steam closed.
+# > Crashes when Steam is not running. Repro: start the game from
+# > the Epic launcher with Steam closed.
 # ==============================================================
 <log content: the original lines, unchanged apart from redaction>
 ```
 
 - **Content**: the full log, or only the entries you can currently see (written as their original lines, so the file is still a valid log).
-- Comte Logger reads the header back when you reopen the file, restoring the note, tags and kind (no detection needed).
-- Default folder: `Documents\ComteLogger\sessions\<yyyy-MM-dd_HH-mm>_<product-or-editor>.log`, changeable in settings.
+- Comte Logger reads the header back when you reopen the file, restoring the note, tags and kind (no detection needed). Line numbers in a reopened session count from the first log line after the header.
+- Note lines are written as `# > text`, so a note can never end the header early. The header also records `source_path`, which is redacted too.
+- Default folder: `Documents\ComteLogger\sessions\<yyyy-MM-dd_HH-mm>_<title>.log`. `Documents` comes from the Windows known-folder API, so OneDrive redirection works. Choosing a custom folder is part of M12's settings.
+- **Save dialog** (toolbar or Ctrl+S): note, tags, whole log or only the entries matching the current filters, Redact on or off, an "Also redact" field for your own words, and a live preview ("106 values will be replaced: 89 user names, 5 tokens, …").
+- The left panel lists the sessions saved in the default folder, with their tags and the note's first line as a tooltip. A reopened session shows a card with its note, tags, origin and redaction status. Saving it again keeps the note and tags.
+- `comte-logger --summary <file>` uses the same loader, so it understands sessions too.
 
 ### 6.2 Redaction (on by default)
 The real logs on this machine contain values that must not be shared:
@@ -272,7 +276,19 @@ The real logs on this machine contain values that must not be shared:
 | Emails and IPs | | `<email>`, `<ip>` |
 | GUID-like user or save IDs (32 hex characters) | `Saves\b120cfa6…\Profile.json` | `<id>` |
 
-The rules live in `comte-core`, are tested with fixtures, and show a "N values redacted" summary before saving.
+More rules were added from real logs:
+
+| What | Example seen in real logs | Replaced with |
+|---|---|---|
+| Flag whose value is on the next line | `-accessToken` ⏎ `kJw97…`, `-hubSessionId` ⏎ `34e4…` | `<redacted>` |
+| User names outside paths | `LicenseClient-cosgu` (the name is learned from paths in the same log) | `LicenseClient-<user>` |
+| Player identity fields | `displayName = …`, `"playerName":"…"`, `epicId = …` | `<user>` / `<id>` (`0` values are kept) |
+| Machine names | `WindowsEditor(7,DESKTOP-MUOR995)` | `<host>` |
+| Crash handler user | `UserName: 'player'` | `<user>` |
+
+Names found in identity fields and `-epicusername=` are also masked wherever they appear as free text. Loopback IPs (`127.x`) are kept. Version numbers, package ids (`pkg@1.2.3`), asset GUIDs and Mono assembly hashes are left alone; there are tests for these.
+
+The rules live in `comte-core::redact` and are tested against real log lines. An opt-in test (`COMTE_REAL_LOG=<file> cargo test -p comte-app -- --ignored`) checks that a real log has no trace of the user left after redaction. All 28 local logs pass except one: Terraforming Mars logs the Epic display name as unlabeled free text. That case is what "Also redact" is for, because no rule can safely guess an unlabeled name.
 
 ### 6.3 Markdown report export
 A short report to paste into Jira or Slack: verdict, info card, the note and tags, the top errors with their culprit frame and a trimmed stack, and the slowest items. It is redacted with the same rules.
@@ -366,7 +382,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 | M3 | Unity Player parser (crash, device facts, exceptions, scene/memory) | Snapshot tests cover §4.2 ✅ |
 | M4 | Locator, Player discovery and file-kind detection | Lists the real logs on this machine ✅ |
 | M5 | GUI viewer: sources, sections, list, filters, search, details, collapse, noise toggle | `Editor.log` reads clearly ✅ |
-| M6 | Save session: header, note, tags, redaction, reopen | Round trip keeps the note and tags; redaction tests pass |
+| M6 | Save session: header, note, tags, redaction, reopen | Round trip keeps the note and tags; redaction tests pass ✅ |
 | M7 | Live tail | New Unity output appears in under 1 s; truncation handled |
 | M8 | Insights panel | Verdict, counts, slowest items, top repeated messages |
 | M9 | Open in IDE | Clicking a frame opens Rider or VS Code at the line |
@@ -384,7 +400,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 
 ## 13. Notes for later milestones
 - **M12 console window:** the binary still uses the console subsystem, so `--list` and `--summary` can print. Launched from Explorer, a console window opens behind the GUI. Fix this in M12, for example with a separate CLI binary or by attaching to the parent console.
-- **M6 redaction:** the real Editor log's `COMMAND LINE ARGUMENTS` block contains the full `-accessToken` value and `-hubSessionId`, so redaction must cover them.
+- **M12 settings:** save the "Also redact" words and a custom sessions folder between runs; today they last only until the app closes.
 - **M5 culprit for release builds:** Player frames usually have no file path, so `culprit()` finds no location. The UI should fall back to showing the first user frame's name (for example `Gun.StopShooting()`).
 - **M8 insights:** the crash verdict can use the section tree directly. A Crash section nested in "Scene #3" means "crashed in scene #3".
 - **Compile metric:** this comes from Tundra's own duration. It can differ from the separate `AssetDatabase: script compilation time` line, which Unity sometimes prints before the compile starts.

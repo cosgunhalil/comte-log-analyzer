@@ -1,14 +1,12 @@
 //! Command-line mode: `--list` and `--summary <file>`.
 
 use std::path::Path;
-use std::time::{Instant, SystemTime};
+use std::time::SystemTime;
 
-use comte_core::{
-    DETECT_LINES, LogParser, LogSource, PlainTextParser, SourceRole, detect_engine,
-    format_duration, parse_file, read_head,
-};
+use comte_core::{LogSource, SourceRole, format_duration};
 
 use crate::engines::engines;
+use crate::loader::load;
 
 pub fn list_sources() {
     for engine in engines() {
@@ -63,23 +61,20 @@ pub fn age(modified: SystemTime) -> String {
 }
 
 pub fn summarize(path: &Path) -> std::io::Result<()> {
-    let head = read_head(path, DETECT_LINES)?;
-    let head: Vec<&str> = head.iter().map(String::as_str).collect();
-    let engines = engines();
-    let detected = detect_engine(&engines, &head);
-    let kind = detected.map(|(_, kind)| kind);
-
-    let mut parser: Box<dyn LogParser> = match detected {
-        Some((engine, kind)) => engine.new_parser(kind),
-        None => Box::new(PlainTextParser),
-    };
-    let started = Instant::now();
-    let doc = parse_file(path, parser.as_mut())?;
-    let elapsed = started.elapsed();
+    // Same loading as the app: detection, saved-session headers, plain text.
+    let loaded = load(path, &path.display().to_string())?;
+    let doc = &loaded.doc;
+    let elapsed = loaded.elapsed;
 
     let counts = doc.counts();
     println!("file:     {}", path.display());
-    println!("kind:     Unity {}", kind.map_or("unknown", |k| k.label()));
+    println!("kind:     {}", loaded.kind_label);
+    if let Some(session) = &loaded.session {
+        println!("tags:     {}", session.tags.join(", "));
+        if let Some(first) = session.note.lines().next() {
+            println!("note:     {first}");
+        }
+    }
     println!(
         "parsed:   {} lines -> {} entries in {}",
         doc.line_count(),

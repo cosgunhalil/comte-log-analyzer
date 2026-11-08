@@ -10,6 +10,7 @@ mod cli;
 mod devtools;
 mod engines;
 mod loader;
+mod save;
 mod theme;
 mod view;
 
