@@ -265,6 +265,10 @@ pub struct LogEntry {
     pub source: Option<SourceRef>,
     /// Hash used to collapse duplicates; assigned by [`crate::LogDocument`].
     pub fingerprint: u64,
+    /// The parser wrote this message for humans ("Domain reload took 1.30 s",
+    /// "Entering play mode (#1)"). Summaries stay visible when engine chatter
+    /// is hidden.
+    pub summary: bool,
 }
 
 impl LogEntry {
@@ -285,7 +289,24 @@ impl LogEntry {
             stack: Vec::new(),
             source: None,
             fingerprint: 0,
+            summary: false,
         }
+    }
+
+    /// Marks this entry as a human-written summary.
+    pub fn as_summary(mut self) -> Self {
+        self.summary = true;
+        self
+    }
+
+    /// Engine output a reader rarely needs: Info entries that are neither the
+    /// game's own logs nor summaries, plus everything in a noise category.
+    /// Hidden unless "Show engine noise" is on.
+    pub fn is_engine_chatter(&self) -> bool {
+        if self.category.is_noise() {
+            return self.severity < Severity::Warning;
+        }
+        self.severity == Severity::Info && !self.summary && self.category != Category::UserLog
     }
 
     pub fn with_details(mut self, details: Vec<String>) -> Self {
@@ -630,6 +651,30 @@ mod tests {
         assert_eq!(entry.culprit().unwrap().short(), "Enemy.cs:57");
         assert_eq!(entry.user_frames().count(), 2);
         assert_eq!(entry.line_count(), 5);
+    }
+
+    #[test]
+    fn engine_chatter_rules() {
+        let chatter = LogEntry::new(Severity::Info, Category::DomainReload, "Mono: x", 1..2);
+        assert!(chatter.is_engine_chatter());
+        assert!(!chatter.clone().as_summary().is_engine_chatter());
+        let user = LogEntry::new(Severity::Info, Category::UserLog, "hi", 1..2);
+        assert!(!user.is_engine_chatter());
+        let warn = LogEntry::new(Severity::Warning, Category::Other, "careful", 1..2);
+        assert!(!warn.is_engine_chatter());
+        let licensing_summary =
+            LogEntry::new(Severity::Info, Category::Memory, "Unloaded 3 assets", 1..2).as_summary();
+        assert!(
+            licensing_summary.is_engine_chatter(),
+            "noise categories stay hidden"
+        );
+        let noisy_error = LogEntry::new(
+            Severity::Error,
+            Category::Licensing,
+            "license expired",
+            1..2,
+        );
+        assert!(!noisy_error.is_engine_chatter(), "problems are never noise");
     }
 
     #[test]

@@ -321,9 +321,16 @@ Choose **A** and **B** (by default `Editor-prev.log` vs `Editor.log`). The compa
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- Sections can be collapsed. Each header shows its error and warning counts and its duration.
+- Sections can be collapsed. Each header shows its error and warning counts, its duration and its line range. When a log opens, sections with no problems start collapsed, except Play mode, Scene and Crash sections, where the game's own logs are.
+- **Noise:** "Engine noise" off (the default) hides `LogEntry::is_engine_chatter()` entries. Those are everything in a noise category, plus Info entries that are neither user logs nor summaries. Parsers mark human-written messages ("Domain reload took 1.30 s") as `summary`, so these stay visible.
+- **Collapse duplicates** (on by default) merges entries with the same fingerprint within a section into one row with a ×N badge. With it, TerraScape's 103 NullReferenceExceptions become 4 rows.
+- Rows show the culprit on the right. For release builds without paths, they show the first user frame instead (`Gun.StopShooting()`).
+- The details panel shows the message, where it happened, the section path ("During"), line numbers, details, the stack trace with engine and package runs folded, and the original log lines. With nothing selected, it shows the info card: facts, problem counts and a timeline overview.
+- Open a log from the sources list, with Ctrl+O, by dropping a file on the window, or as a command-line argument. With no argument, the app opens `Editor.log`.
+- Loading runs on a background thread (`std::sync::mpsc`; crossbeam was not needed). Only the latest request's result is shown.
+- **Dev hooks** (`COMTE_SCREENSHOT=out.png`, `COMTE_SELECT=problem`, `COMTE_SEARCH=…`, `COMTE_NOISE=1`) let the UI screenshot itself in a given state and quit, for automated visual checks.
 - The list is virtualized (only visible rows are drawn), so it stays fast on very large logs.
-- Keyboard: `Ctrl+F` search, `F8` / `Shift+F8` next or previous error, `Ctrl+S` save session.
+- Keyboard: `Ctrl+F` search, `F8` / `Shift+F8` next or previous problem (this opens collapsed sections), `↑` / `↓` move the selection, `Esc` clears it, `F5` reloads, `Ctrl+O` opens a file, `Ctrl+S` saves the session (M6).
 
 ---
 
@@ -358,7 +365,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 | M2 | Unity Editor parser with timeline sections and frame classification | Snapshot tests cover §4.1 and §4.3 ✅ |
 | M3 | Unity Player parser (crash, device facts, exceptions, scene/memory) | Snapshot tests cover §4.2 ✅ |
 | M4 | Locator, Player discovery and file-kind detection | Lists the real logs on this machine ✅ |
-| M5 | GUI viewer: sources, sections, list, filters, search, details, collapse, noise toggle | `Editor.log` reads clearly |
+| M5 | GUI viewer: sources, sections, list, filters, search, details, collapse, noise toggle | `Editor.log` reads clearly ✅ |
 | M6 | Save session: header, note, tags, redaction, reopen | Round trip keeps the note and tags; redaction tests pass |
 | M7 | Live tail | New Unity output appears in under 1 s; truncation handled |
 | M8 | Insights panel | Verdict, counts, slowest items, top repeated messages |
@@ -376,7 +383,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 - Real logs never go into the repo. Fixtures are trimmed and redacted, and `samples/private/` is git-ignored.
 
 ## 13. Notes for later milestones
-- **M5 noise:** most engine lines in an Editor log are Info entries in categories such as System, Other and DomainReload. Besides hiding the noise categories, the "Show engine noise" toggle should also hide Info entries that are not UserLog.
+- **M12 console window:** the binary still uses the console subsystem, so `--list` and `--summary` can print. Launched from Explorer, a console window opens behind the GUI. Fix this in M12, for example with a separate CLI binary or by attaching to the parent console.
 - **M6 redaction:** the real Editor log's `COMMAND LINE ARGUMENTS` block contains the full `-accessToken` value and `-hubSessionId`, so redaction must cover them.
 - **M5 culprit for release builds:** Player frames usually have no file path, so `culprit()` finds no location. The UI should fall back to showing the first user frame's name (for example `Gun.StopShooting()`).
 - **M8 insights:** the crash verdict can use the section tree directly. A Crash section nested in "Scene #3" means "crashed in scene #3".

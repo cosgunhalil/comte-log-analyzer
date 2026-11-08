@@ -237,6 +237,11 @@ fn info(category: Category, message: impl Into<String>, n: usize) -> LogEntry {
     entry(Severity::Info, category, message, n)
 }
 
+/// An Info entry whose message the parser wrote for humans.
+fn summary(category: Category, message: impl Into<String>, n: usize) -> LogEntry {
+    info(category, message, n).as_summary()
+}
+
 /// The shared Unity parser. Use [`EditorParser`] or [`PlayerParser`].
 #[derive(Debug)]
 pub struct UnityParser {
@@ -604,7 +609,7 @@ impl UnityParser {
         }
 
         if text.starts_with("A crash has been intercepted by the crash handler") {
-            let e = info(
+            let e = summary(
                 Category::Crash,
                 "Unity's crash handler wrote a crash report",
                 n,
@@ -616,7 +621,7 @@ impl UnityParser {
         if text == "Uploading Crash Report" {
             // Despite the wording this is Unity Cloud Diagnostics reporting the
             // exception logged right after it, not a crash.
-            let e = info(
+            let e = summary(
                 Category::System,
                 "Exception reported to Unity Cloud Diagnostics",
                 n,
@@ -642,7 +647,7 @@ impl UnityParser {
                 )
             };
             out.push(ParseEvent::Metric(Metric::duration(kind, d, n)));
-            let e = info(Category::DomainReload, message, n);
+            let e = summary(Category::DomainReload, message, n);
             self.start(
                 Pending::new(e).closing(SectionKind::DomainReload, Some(d)),
                 out,
@@ -673,7 +678,7 @@ impl UnityParser {
             } else {
                 format!("Scene unloaded in {}", format_duration(d))
             };
-            self.emit(info(Category::SceneLoad, message, n), out);
+            self.emit(summary(Category::SceneLoad, message, n), out);
             return;
         }
 
@@ -696,7 +701,7 @@ impl UnityParser {
                 d,
                 n,
             )));
-            let e = info(
+            let e = summary(
                 Category::DomainReload,
                 format!("Domain reload took {}", format_duration(d)),
                 n,
@@ -713,7 +718,7 @@ impl UnityParser {
             self.begin_play_mode(n, out);
             let k = self.play_mode_count;
             self.emit(
-                info(Category::PlayMode, format!("Entering play mode (#{k})"), n),
+                summary(Category::PlayMode, format!("Entering play mode (#{k})"), n),
                 out,
             );
             return;
@@ -727,7 +732,7 @@ impl UnityParser {
                 self.flush(out);
                 if self.is_open(SectionKind::PlayMode) && self.play_scene_loaded {
                     let k = self.play_mode_count;
-                    let e = info(
+                    let e = summary(
                         Category::PlayMode,
                         format!("Exited play mode (#{k}), restored editor scenes"),
                         n,
@@ -741,14 +746,14 @@ impl UnityParser {
                     }
                     self.play_scene_loaded = true;
                     let k = self.play_mode_count;
-                    Pending::new(info(
+                    Pending::new(summary(
                         Category::PlayMode,
                         format!("Play mode #{k} scene loaded"),
                         n,
                     ))
                 }
             } else {
-                Pending::new(info(
+                Pending::new(summary(
                     Category::SceneLoad,
                     format!("Loaded scene {}", file_name(scene)),
                     n,
@@ -759,7 +764,7 @@ impl UnityParser {
         }
 
         if let Some(c) = SCENE_OPENING.captures(text) {
-            let e = info(
+            let e = summary(
                 Category::SceneLoad,
                 format!("Opening scene {}", file_name(&c["scene"])),
                 n,
@@ -778,7 +783,7 @@ impl UnityParser {
                     out,
                 );
             }
-            let e = info(
+            let e = summary(
                 Category::Build,
                 format!("Script compilation requested: {}", &c["why"]),
                 n,
@@ -827,7 +832,7 @@ impl UnityParser {
                             n,
                         )
                     } else {
-                        info(
+                        summary(
                             Category::Build,
                             format!("Script compilation finished in {took}"),
                             n,
@@ -873,7 +878,7 @@ impl UnityParser {
                 format_duration(d),
                 &c["by"]
             );
-            self.emit(info(Category::AssetPipeline, message, n), out);
+            self.emit(summary(Category::AssetPipeline, message, n), out);
             return;
         }
 
@@ -883,7 +888,7 @@ impl UnityParser {
                 out.push(ParseEvent::Metric(metric));
             }
             self.start(
-                Pending::new(info(Category::Memory, u.message, n)).fold("unload"),
+                Pending::new(summary(Category::Memory, u.message, n)).fold("unload"),
                 out,
             );
             return;
@@ -896,7 +901,7 @@ impl UnityParser {
                 d,
                 n,
             )));
-            let e = info(
+            let e = summary(
                 Category::System,
                 format!("Project loaded in {}", format_duration(d)),
                 n,
@@ -931,7 +936,7 @@ impl UnityParser {
             self.start(Pending::new(e).mode(Mode::CommandLine), out);
             return;
         } else if matches!(text, "Direct3D:" | "OpenGL:" | "Vulkan:" | "Metal:") {
-            let e = info(Category::Graphics, "Graphics device", n);
+            let e = summary(Category::Graphics, "Graphics device", n);
             self.start(Pending::new(e).block(Block::Graphics), out);
             return;
         }
