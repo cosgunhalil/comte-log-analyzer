@@ -239,3 +239,32 @@ second scene log
     assert_eq!(startup.kind, SectionKind::Startup);
     assert_eq!(startup.line_range, 1..3);
 }
+
+#[test]
+fn fixture_files_are_detected_by_content() {
+    use comte_core::LogKind;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    assert_eq!(
+        comte_unity::detect_file(dir.join("player_session.log")).unwrap(),
+        Some(LogKind::Player)
+    );
+    assert_eq!(
+        comte_unity::detect_file(dir.join("editor_session.log")).unwrap(),
+        Some(LogKind::Editor)
+    );
+}
+
+#[test]
+fn unity_support_detects_and_builds_parsers() {
+    use comte_core::{EngineSupport, LogKind, detect_engine};
+    let engines: Vec<Box<dyn EngineSupport>> = vec![Box::new(comte_unity::UnitySupport)];
+    let (engine, kind) =
+        detect_engine(&engines, &["Initialize engine version: 2022.3.1f1 (abc)"]).unwrap();
+    assert_eq!(kind, LogKind::Player);
+    let doc = parse_reader(
+        Cursor::new("Initialize engine version: 2022.3.1f1 (abc)\nUnloadTime: 1.0 ms\n"),
+        engine.new_parser(kind).as_mut(),
+    )
+    .unwrap();
+    assert_eq!(doc.fact(&FactKey::EngineVersion), Some("2022.3.1f1"));
+}

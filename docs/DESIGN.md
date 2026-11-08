@@ -37,7 +37,11 @@ Comte Logger is a Windows desktop log analyzer for game engines, written in Rust
 | Crash reports       | `…\LocalLow\<Company>\<Product>\Crashes\` (when present)              |
 | Any file            | **Open file…** or drag and drop (logs sent by testers or players, saved sessions) |
 
-- **Player discovery:** scan `LocalLow\*\*\Player*.log` and list each game as Company › Product, with last-modified time and size. Newest first.
+- **Player discovery** (`comte_unity::UnityLocator`): scan `LocalLow\<Company>\<Product>\` for exactly `Player.log` and `Player-prev.log` (other names, such as CEF's `Player-browser.log`, are skipped). Each game is listed as Company › Product with its size and last-modified time. Games are sorted by their newest log, and each game's current log comes before its previous one. Unreadable folders are skipped silently.
+- **Editor logs** are always listed, even when missing (`size: None`), so the UI can show them greyed out.
+- **LocalLow** is found as the sibling of `%LOCALAPPDATA%`, falling back to `%USERPROFILE%\AppData\LocalLow`.
+- **File-kind detection** (`comte_core::detect_engine` + `EngineSupport::detect`): read the first 64 lines and ask each engine in turn. A file no engine recognizes opens with the plain-text parser. File names are never trusted, because testers rename files.
+- macOS and Linux roots are wired up in the locator but untested until M12.
 - Logs that players and QA send usually arrive as loose files, so drag and drop is a first-class way to open one.
 
 ---
@@ -353,7 +357,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 | M1 | Workspace split, `comte-core` model and traits | Core types compile and are tested ✅ |
 | M2 | Unity Editor parser with timeline sections and frame classification | Snapshot tests cover §4.1 and §4.3 ✅ |
 | M3 | Unity Player parser (crash, device facts, exceptions, scene/memory) | Snapshot tests cover §4.2 ✅ |
-| M4 | Locator, Player discovery and file-kind detection | Lists the real logs on this machine |
+| M4 | Locator, Player discovery and file-kind detection | Lists the real logs on this machine ✅ |
 | M5 | GUI viewer: sources, sections, list, filters, search, details, collapse, noise toggle | `Editor.log` reads clearly |
 | M6 | Save session: header, note, tags, redaction, reopen | Round trip keeps the note and tags; redaction tests pass |
 | M7 | Live tail | New Unity output appears in under 1 s; truncation handled |

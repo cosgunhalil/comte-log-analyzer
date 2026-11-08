@@ -21,11 +21,11 @@ pub mod reader;
 pub mod source;
 
 pub use document::LogDocument;
-pub use engine::{EngineSupport, LogLocator};
+pub use engine::{DETECT_LINES, EngineSupport, LogLocator, detect_engine};
 pub use model::{
     Category, Fact, FactKey, FrameKind, LogEntry, Metric, MetricKind, MetricValue, Section,
     SectionKind, Severity, SeverityCounts, SourceRef, StackFrame, format_duration,
 };
 pub use parser::{LogParser, ParseEvent, PlainTextParser, SectionStart};
-pub use reader::{LineReader, parse_file, parse_reader};
+pub use reader::{LineReader, parse_file, parse_reader, read_head};
 pub use source::{EngineId, LogKind, LogSource, SourceRole};

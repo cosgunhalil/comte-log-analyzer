@@ -97,6 +97,21 @@ pub fn parse_reader(reader: impl BufRead, parser: &mut dyn LogParser) -> io::Res
     Ok(doc)
 }
 
+/// The first `max_lines` lines of a file (lossy UTF-8, no terminators),
+/// used to detect what kind of log it is.
+pub fn read_head(path: impl AsRef<Path>, max_lines: usize) -> io::Result<Vec<String>> {
+    let file = File::open(path)?;
+    let mut lines = LineReader::new(BufReader::new(file));
+    let mut head = Vec::with_capacity(max_lines);
+    while head.len() < max_lines {
+        match lines.next_line()? {
+            Some((_, line)) => head.push(line.to_owned()),
+            None => break,
+        }
+    }
+    Ok(head)
+}
+
 /// Opens and parses a log file.
 pub fn parse_file(path: impl AsRef<Path>, parser: &mut dyn LogParser) -> io::Result<LogDocument> {
     let file = File::open(path)?;
@@ -151,6 +166,15 @@ mod tests {
         let (n, line) = resumed.next_line().unwrap().unwrap();
         assert_eq!((n, line), (3, "three"));
         assert_eq!(resumed.offset(), data.len() as u64);
+    }
+
+    #[test]
+    fn read_head_stops_at_limit_and_at_eof() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+        let head = read_head(path, 2).unwrap();
+        assert_eq!(head, ["[package]", "name = \"comte-core\""]);
+        assert!(read_head(path, 10_000).unwrap().len() < 10_000);
+        assert!(read_head("no/such/file.log", 5).is_err());
     }
 
     #[test]
