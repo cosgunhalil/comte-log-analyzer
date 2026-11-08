@@ -1,0 +1,351 @@
+# Comte Logger — Application Design
+
+> *"Savoir pour prévoir"* — Auguste Comte. Know the log so you can predict the bug.
+
+Comte Logger is a Windows desktop log analyzer for game engines, written in Rust.
+**v1 targets Unity**. The architecture leaves room for Unreal and Godot later.
+
+**Main goal:** turn noisy Unity logs (mainly the Editor log, plus Player logs) into something a person can read, then save and share them with notes.
+
+---
+
+## 0. Decisions so far
+
+| Topic | Decision |
+|---|---|
+| Primary use | Post-mortem debugging, QA and teammates sharing logs, player bug reports |
+| Problems to fix first | Engine noise, unreadable stack traces, no timeline, hidden performance clues |
+| GUI | `egui` / `eframe` (pure Rust, single `.exe`) |
+| Saved session | Plain `.log` file with a notes header (any text editor can open it) |
+| Notes | One session note + tags |
+| Privacy | Redact by default, can be turned off for each save |
+| Live tail | In the MVP, built right after the viewer |
+| Timeline | Grouped, collapsible sections in the entry list |
+| Platforms (v1) | Windows only |
+| v1 extras | Insights panel, open `file:line` in an IDE, compare two logs, Markdown report export |
+
+---
+
+## 1. Log sources (Windows)
+
+| Source              | Path                                                                  |
+|---------------------|-----------------------------------------------------------------------|
+| Editor log          | `%LOCALAPPDATA%\Unity\Editor\Editor.log`                              |
+| Previous Editor log | `%LOCALAPPDATA%\Unity\Editor\Editor-prev.log`                         |
+| Player log          | `%USERPROFILE%\AppData\LocalLow\<Company>\<Product>\Player.log`       |
+| Previous Player log | `%USERPROFILE%\AppData\LocalLow\<Company>\<Product>\Player-prev.log`  |
+| Crash reports       | `…\LocalLow\<Company>\<Product>\Crashes\` (when present)              |
+| Any file            | **Open file…** or drag and drop (logs sent by testers or players, saved sessions) |
+
+- **Player discovery:** scan `LocalLow\*\*\Player*.log` and list each game as Company › Product, with last-modified time and size. Newest first.
+- Logs that players and QA send usually arrive as loose files, so drag and drop is a first-class way to open one.
+
+---
+
+## 2. Architecture
+
+A Cargo workspace. Engine-specific code stays out of the core and the GUI.
+
+```
+comte-log-analyzer/
+├── Cargo.toml                    # [workspace]
+├── crates/
+│   ├── comte-core/               # model, traits, sections, filters, redaction,
+│   │                             # session save/load, Markdown export, diff
+│   ├── comte-unity/              # Unity locator + Editor parser + Player parser
+│   └── comte-app/                # egui GUI → binary "comte-logger"
+├── docs/
+└── crates/comte-unity/tests/fixtures/   # small, redacted samples
+```
+
+```
+            ┌──────────────┐
+            │  comte-app   │  egui UI · worker thread · file watcher
+            └──────┬───────┘
+     ┌─────────────┴──────────────┐
+     ▼                            ▼
+┌────────────┐  implements  ┌──────────────┐
+│ comte-core │◄─────────────│ comte-unity  │   (later: comte-unreal, comte-godot)
+└────────────┘              └──────────────┘
+```
+
+### Core traits
+
+```rust
+pub trait LogLocator {
+    fn discover(&self) -> Vec<LogSource>;          // Editor, Editor-prev, Players…
+}
+
+/// Streaming and stateful: one Unity entry can span many lines.
+/// The same parser serves full files, huge files and live tail.
+pub trait LogParser {
+    fn feed_line(&mut self, line_no: usize, line: &str) -> ParseEvent;
+    fn finish(&mut self) -> Vec<ParseEvent>;
+}
+
+pub enum ParseEvent {
+    None,
+    Entry(LogEntry),
+    SectionStart(Section),   // "Play mode #2", "Script compilation", …
+    SectionEnd { metric: Option<Metric> },
+    Fact(Fact),              // Unity version, GPU, OS… → info card
+}
+
+pub trait EngineSupport {
+    fn id(&self) -> &'static str;
+    fn locator(&self) -> Box<dyn LogLocator>;
+    fn detect(&self, first_lines: &[&str]) -> Option<LogKind>; // Editor or Player?
+    fn new_parser(&self, kind: LogKind) -> Box<dyn LogParser>;
+}
+```
+
+`detect` lets a dropped file open with the right parser. For example, `Initialize engine version:` means a Player log, and `Built from '…' branch` means an Editor log.
+
+### Threading
+- The UI thread only draws.
+- A worker thread reads the file (using a byte offset) and sends `ParseEvent` batches over `crossbeam-channel`.
+- Live tail: `notify` watches the file, then the app reads from the last offset. When the file shrinks (Unity restarted and truncated it), the app shows "log restarted" and parses it again.
+
+---
+
+## 3. Data model
+
+```rust
+pub struct LogEntry {
+    pub id: u64,
+    pub line_range: Range<usize>,      // position in the original file
+    pub section_id: Option<u32>,       // which timeline section it belongs to
+    pub severity: Severity,            // Crash | Error | Exception | Warning | Info
+    pub category: Category,
+    pub message: String,
+    pub details: Vec<String>,
+    pub stack: Vec<StackFrame>,
+    pub source: Option<SourceRef>,     // file + line when known
+    pub fingerprint: u64,              // used to collapse duplicates
+}
+
+pub struct StackFrame {
+    pub text: String,                  // cleaned: "GameInstaller.Report(TextData)"
+    pub location: Option<SourceRef>,   // Assets/…/GameInstaller.cs:84
+    pub kind: FrameKind,               // User | Package | Engine | Native
+}
+
+pub struct Section {                   // timeline block
+    pub id: u32,
+    pub kind: SectionKind,             // Startup | Compile | DomainReload | AssetRefresh
+                                       // | PlayMode | SceneLoad | Build | Shutdown | Crash
+    pub title: String,                 // "Play mode #2"
+    pub line_range: Range<usize>,
+    pub duration: Option<Duration>,
+    pub counts: SeverityCounts,        // errors and warnings inside this block
+}
+
+pub enum Category {
+    UserLog, Exception, Compiler, Crash,
+    AssetPipeline, DomainReload, PlayMode, SceneLoad, Memory,
+    PackageManager, Licensing, Build, Shader, Graphics, Input, System, Other,
+}
+```
+
+**Noise policy:** each category has a default visibility. `Licensing`, `PackageManager`, profiling detail, `Input` and `Memory` are **hidden by default**. A single "Show engine noise" toggle shows them again.
+
+---
+
+## 4. Parsing rules
+
+The rules below come from a real Unity 6000.3 `Editor.log` and from 2019.4 `Player.log` files found on this machine.
+Stack frame syntax differs between versions, so the parser accepts both forms:
+- 6000.x: `UnityEngine.Debug:Log (object)`
+- 2019.x: `UnityEngine.Debug:Log(Object)`
+
+### 4.1 Editor.log
+
+| Pattern | Result |
+|---|---|
+| Message → `UnityEngine.Debug:ExtractStackTraceNoAlloc…` → frames → `(Filename: X Line: N)` → blank line | **UserLog**. Severity comes from `Debug:Log` / `LogWarning` / `LogError` / `LogException`. The internal frames (`StackTraceUtility`, `DebugLogHandler`, `Logger`) are dropped. |
+| `Assets/Foo.cs(12,5): error CS0103: …` | **Compiler** error or warning, with a location |
+| `<Type>Exception: msg` followed by frames | **Exception** |
+| `[Licensing::*] …` and its indented continuation lines | **Licensing**, folded into one entry |
+| `[Package Manager] …` | **PackageManager** |
+| `Asset Pipeline Refresh (id=…): Total: X seconds - Initiated by …` | **AssetRefresh** section and metric |
+| `Begin MonoManager ReloadAssembly` … `Domain Reload Profiling: Nms` | **DomainReload** section and metric; the profiling tree is folded |
+| `Starting: …ScriptCompilationBuildProgram…` / Bee output | **Compile** section |
+| `Reloading assemblies for play mode.` | starts a **PlayMode #n** section |
+| First lines: `Built from…`, `OS:`, `Physical Memory`, `Date:` | **Facts** for the info card |
+
+### 4.2 Player.log
+
+| Pattern | Result |
+|---|---|
+| `Initialize engine version: 2019.4.40f1 (…)` | Fact: Unity version; this line also identifies the file as a Player log |
+| `Direct3D:` block: `Version`, `Renderer`, `VRAM`, `Driver` | Facts: graphics API, GPU, VRAM, driver |
+| `Begin MonoManager ReloadAssembly` → `- Completed reload, in X seconds` | **Startup** metric |
+| `UnloadTime: X ms` / `Unloading N unused Assets … Loaded Objects now: M` | **SceneLoad** section boundary and **Memory** metric |
+| `Exception: msg` + `  at Ns.Class.Method (…) [0x00046] in <hash>:0` | **Exception** (IL2CPP/Mono release frames often have no line number) |
+| `(Filename: C:\buildslave\…\Debug.bindings.h Line: 35)` | An engine path, not user code; the entry location falls back to the first user frame |
+| `Crash!!!`, `========== OUTPUTTING STACK TRACE ==========`, `Received signal`, `Uploading Crash Report` | **Crash** section; native frames are kept and the last N lines before the crash are highlighted |
+
+### 4.3 Stack trace readability
+- Classify each frame as **User** (`Assets/`), **Package** (`Packages/`, `Library/PackageCache`), **Engine** (`UnityEngine.*`, `UnityEditor.*`, `System.*`) or **Native**.
+- Show user frames in bold, fold engine frames into "▸ 6 engine frames", and drop the logging plumbing frames.
+- Clean the signature: `SpiritCabinet.Installers.GameInstaller:Report (SpiritCabinet.Text.Import.TextData)` becomes `GameInstaller.Report(TextData)`, with the full namespace in a tooltip.
+- The **culprit** is the first user frame. It appears on the entry row as `GameInstaller.cs:84`.
+
+---
+
+## 5. Insights panel
+
+Computed after parsing:
+- **Verdict line**, for example: "💥 Crashed in Play mode #3 after NullReferenceException in EnemySpawner.cs:57", or "✅ Clean session, 2 warnings".
+- Counts by severity and category.
+- **Top repeated messages** (by fingerprint) with counts.
+- **Slowest items**: domain reloads, asset refreshes, compiles and scene unloads, with a small bar per item.
+- Device/Editor info card: Unity version, OS, RAM, GPU, driver.
+- Clicking any item jumps to its entry or section in the list.
+
+---
+
+## 6. Saving and sharing
+
+### 6.1 Saved session (`.log`)
+
+```
+# ==== Comte Logger session ====================================
+# comte_version: 0.1.0
+# source:        Player.log (Flanne/MinutesTillDawn)
+# kind:          unity-player
+# saved_at:      2026-11-08T14:05:00+03:00
+# unity:         2019.4.40f1
+# content:       filtered (severity>=Warning, noise hidden)
+# redacted:      yes
+# tags:          crash, steam, build-1.2.3
+# --- note -----------------------------------------------------
+# Crashes when Steam is not running. Repro: start the game from
+# the Epic launcher with Steam closed.
+# ==============================================================
+<log content: the original lines, unchanged apart from redaction>
+```
+
+- **Content**: the full log, or only the entries you can currently see (written as their original lines, so the file is still a valid log).
+- Comte Logger reads the header back when you reopen the file, restoring the note, tags and kind (no detection needed).
+- Default folder: `Documents\ComteLogger\sessions\<yyyy-MM-dd_HH-mm>_<product-or-editor>.log`, changeable in settings.
+
+### 6.2 Redaction (on by default)
+The real logs on this machine contain values that must not be shared:
+
+| What | Example seen in real logs | Replaced with |
+|---|---|---|
+| Windows user name in paths | `C:\Users\cosgu\…` | `C:\Users\<user>\…` |
+| Launcher auth arguments | `-AUTH_PASSWORD=…`, `-epicuserid=…`, `-epicusername="…"` | `-AUTH_PASSWORD=<redacted>` |
+| Licensing IDs | `Machine Id:`, `Session Id:`, `Correlation Id:` | `<redacted>` |
+| Access tokens | `access token kJw97zns…` | `<token>` |
+| Emails and IPs | | `<email>`, `<ip>` |
+| GUID-like user or save IDs (32 hex characters) | `Saves\b120cfa6…\Profile.json` | `<id>` |
+
+The rules live in `comte-core`, are tested with fixtures, and show a "N values redacted" summary before saving.
+
+### 6.3 Markdown report export
+A short report to paste into Jira or Slack: verdict, info card, the note and tags, the top errors with their culprit frame and a trimmed stack, and the slowest items. It is redacted with the same rules.
+
+---
+
+## 7. Compare two logs
+
+Choose **A** and **B** (by default `Editor-prev.log` vs `Editor.log`). The comparison shows:
+- **New**, **gone** and **common** errors and warnings, matched by fingerprint, with counts.
+- Changes in timings, for example: "domain reload average 1.3 s → 2.5 s (+92%)".
+- Changes in facts (Unity version, GPU, driver).
+
+---
+
+## 8. Open in IDE
+
+- Clicking a user frame or a culprit location opens the file at that line.
+- The project root comes from the Editor log (the project path line) or is chosen once in settings.
+- Supported editors, configurable: **Rider** (`rider64.exe --line N file`), **VS Code** (`code -g file:N`), **Visual Studio** (`devenv /edit file`), or a custom command template `{file} {line}`.
+- Player log frames rarely have a path; those frames are not clickable.
+
+---
+
+## 9. UI layout
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Comte Logger  [Source ▾ Editor.log] [⟳] [● Live] [⇄ Compare] [💾 Save] [⇪ MD] │
+├───────────────┬───────────────────────────────────────────┬──────────────────┤
+│ SOURCES       │ 🔍 search…  [⛔3][⚠12][ℹ240] ☐Collapse ☐Noise │ INSIGHTS ▾        │
+│ Unity Editor  │───────────────────────────────────────────│ ✅ 3 errors,      │
+│  • Editor.log │ ▾ Startup                    ⚠1      4.1s │   no crash       │
+│  • Editor-prev│ ▸ Script compilation                 2.6s │ Slowest reload   │
+│ Unity Players │ ▸ Domain reload                      1.8s │  ████ 2.5s       │
+│  • Windbound  │ ▾ Play mode #1               ⛔2 ⚠3        │ Top repeated     │
+│  • AKNY       │   ⛔ NullReferenceException  GameFlow.cs:42│  ×42 FlowTrace…  │
+│ Saved sessions│   ⚠  Draft text allowed ×3  Installer:84  │──────────────────│
+│  • crash-1.log│   ℹ  [Flow] Boot → MainMenu FlowTrace:26  │ DETAILS          │
+│ [+ Open file] │ ▸ Play mode #2               ⛔1           │ ⛔ NullReference… │
+│               │                                           │ ▸ GameFlow.Tick  │
+│ TAGS          │                                           │   GameFlow.cs:42 │
+│ crash · perf  │                                           │ ▸ 6 engine frames│
+├───────────────┴───────────────────────────────────────────┴──────────────────┤
+│ 4,012 lines · 318 entries · 3 errors · Unity 6000.3.11f1 · parsed 42 ms      │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+- Sections can be collapsed. Each header shows its error and warning counts and its duration.
+- The list is virtualized (only visible rows are drawn), so it stays fast on very large logs.
+- Keyboard: `Ctrl+F` search, `F8` / `Shift+F8` next or previous error, `Ctrl+S` save session.
+
+---
+
+## 10. Tech stack
+
+| Concern | Crate |
+|---|---|
+| GUI | `eframe`, `egui`, `egui_extras` |
+| Native dialogs, drag and drop | `rfd`, egui file drop |
+| Parsing | `regex`, `std::sync::LazyLock` |
+| Hashing (fingerprints) | `xxhash-rust` |
+| Diff | own fingerprint set comparison |
+| File watching | `notify` |
+| Threads | `crossbeam-channel` |
+| Paths | `directories` |
+| Settings | `serde`, `toml` |
+| Time | `chrono` |
+| Errors | `thiserror` (libraries), `anyhow` (app) |
+| Our own logs | `tracing`, `tracing-subscriber` |
+| Tests | unit tests and `insta` snapshots on fixtures |
+
+---
+
+## 11. Milestones
+
+Each milestone ends with a suggested conventional commit. You commit it yourself.
+
+| # | Milestone | Done when |
+|---|---|---|
+| M0 | Scaffold: Cargo project, git init, design | Builds and opens in RustRover ✅ |
+| M1 | Workspace split, `comte-core` model and traits | Core types compile and are tested |
+| M2 | Unity Editor parser with timeline sections and frame classification | Snapshot tests cover §4.1 and §4.3 |
+| M3 | Unity Player parser (crash, device facts, exceptions, scene/memory) | Snapshot tests cover §4.2 |
+| M4 | Locator, Player discovery and file-kind detection | Lists the real logs on this machine |
+| M5 | GUI viewer: sources, sections, list, filters, search, details, collapse, noise toggle | `Editor.log` reads clearly |
+| M6 | Save session: header, note, tags, redaction, reopen | Round trip keeps the note and tags; redaction tests pass |
+| M7 | Live tail | New Unity output appears in under 1 s; truncation handled |
+| M8 | Insights panel | Verdict, counts, slowest items, top repeated messages |
+| M9 | Open in IDE | Clicking a frame opens Rider or VS Code at the line |
+| M10 | Compare two logs | Editor-prev vs Editor diff view |
+| M11 | Markdown report export | Report pastes cleanly into Jira or Slack |
+| M12 | Polish: settings UI, icon, release build | `cargo build --release` gives a working `.exe` |
+
+---
+
+## 12. Conventions
+
+- Rust edition 2024; `cargo fmt` and `cargo clippy -- -D warnings` clean.
+- **The assistant never commits.** Each task ends with a suggested [Conventional Commits](https://www.conventionalcommits.org/) message.
+- Real logs never go into the repo. Fixtures are trimmed and redacted, and `samples/private/` is git-ignored.
+
+## 13. Open questions (for later)
+- macOS and Linux support after v1?
+- Should saved sessions have a library view with search across them by tag?
+- Unreal or Godot next?
