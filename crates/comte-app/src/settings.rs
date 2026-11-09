@@ -1,7 +1,6 @@
 //! Settings kept between runs, in `settings.toml` under the user's config
-//! folder (`%APPDATA%\ComteLogger\config` on Windows).
-//!
-//! M12 adds a settings window; for now the ⚙ menu edits these.
+//! folder (`%APPDATA%\ComteLogger\config` on Windows). Edited in the
+//! Settings window (⚙ in the toolbar).
 
 use std::path::PathBuf;
 
@@ -9,7 +8,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::ide::IdeChoice;
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ThemeChoice {
+    /// Follow Windows' light/dark setting.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemeChoice {
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeChoice::System => "Same as Windows",
+            ThemeChoice::Light => "Light",
+            ThemeChoice::Dark => "Dark",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// Where "open in IDE" sends files.
@@ -19,6 +37,34 @@ pub struct Settings {
     /// Unity project folder used when a log doesn't name one that exists
     /// (Player logs, logs from another machine, redacted sessions).
     pub project_root: Option<PathBuf>,
+    /// Words always redacted in sessions and reports (comma-separated),
+    /// e.g. a display name the redaction rules can't recognize.
+    pub also_redact: String,
+    /// Where sessions are saved; `None` = `Documents\ComteLogger\sessions`.
+    pub sessions_dir: Option<PathBuf>,
+    /// Starting value of "Collapse duplicates".
+    pub collapse_duplicates: bool,
+    /// Starting value of "Engine noise".
+    pub show_noise: bool,
+    /// Turn on live tail whenever `Editor.log` is opened.
+    pub follow_editor_log: bool,
+    pub theme: ThemeChoice,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            ide: IdeChoice::Auto,
+            custom_command: String::new(),
+            project_root: None,
+            also_redact: String::new(),
+            sessions_dir: None,
+            collapse_duplicates: true,
+            show_noise: false,
+            follow_editor_log: false,
+            theme: ThemeChoice::System,
+        }
+    }
 }
 
 impl Settings {
@@ -60,13 +106,21 @@ mod tests {
             ide: IdeChoice::Custom,
             custom_command: r#""C:\Tools\subl.exe" {file}:{line}"#.to_owned(),
             project_root: Some(PathBuf::from(r"C:\Projects\Game")),
+            also_redact: "jane.doe, Studio X".to_owned(),
+            sessions_dir: Some(PathBuf::from(r"D:\Logs")),
+            collapse_duplicates: false,
+            show_noise: true,
+            follow_editor_log: true,
+            theme: ThemeChoice::Dark,
         };
         let text = toml::to_string_pretty(&settings).unwrap();
         assert_eq!(toml::from_str::<Settings>(&text).unwrap(), settings);
 
+        // A file from M9 (only the IDE fields) keeps the new defaults.
         let partial: Settings = toml::from_str("ide = \"Rider\"").unwrap();
         assert_eq!(partial.ide, IdeChoice::Rider);
-        assert_eq!(partial.project_root, None);
+        assert!(partial.collapse_duplicates, "default stays on");
+        assert_eq!(partial.theme, ThemeChoice::System);
         assert!(toml::from_str::<Settings>("ide = \"Emacs\"").is_err());
     }
 }

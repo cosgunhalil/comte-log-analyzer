@@ -12,6 +12,8 @@
 //! - `COMTE_SAVE_TO=file.log`: save the session there right away (no file dialog).
 //! - `COMTE_LIVE=1`: turn live tail on once the log is loaded.
 //! - `COMTE_COMPARE=1`: open the comparison with the previous run after loading.
+//! - `COMTE_SETTINGS_OPEN=1`: open the settings window.
+//! - `COMTE_NO_DISCOVERY=1`: don't list this machine's logs (clean screenshots).
 //! - `COMTE_REPORT=1`: open the report dialog after loading (`=slack` for Slack style).
 //! - `COMTE_IDE_DRY_RUN=1`: print the editor command instead of starting it;
 //!   `COMTE_OPEN=1` opens the selected entry's location after loading.
@@ -40,6 +42,8 @@ pub struct DevHooks {
     pub save_to: Option<PathBuf>,
     pub live: bool,
     pub compare: bool,
+    pub settings_open: bool,
+    pub no_discovery: bool,
     pub report: bool,
     pub report_slack: bool,
     pub ide_dry_run: bool,
@@ -65,6 +69,8 @@ impl DevHooks {
             save_to: var("COMTE_SAVE_TO").map(PathBuf::from),
             live: var("COMTE_LIVE").as_deref() == Some("1"),
             compare: var("COMTE_COMPARE").as_deref() == Some("1"),
+            settings_open: var("COMTE_SETTINGS_OPEN").as_deref() == Some("1"),
+            no_discovery: var("COMTE_NO_DISCOVERY").as_deref() == Some("1"),
             report: var("COMTE_REPORT").is_some(),
             report_slack: var("COMTE_REPORT").as_deref() == Some("slack"),
             ide_dry_run: var("COMTE_IDE_DRY_RUN").as_deref() == Some("1"),

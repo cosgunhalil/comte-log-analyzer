@@ -37,7 +37,7 @@ use crate::save::{
     self, ContentChoice, Prepared, SaveRequest, SessionFile, current_user_name, default_dir,
     default_file_name, discover_sessions, visible_lines,
 };
-use crate::settings::Settings;
+use crate::settings::{Settings, ThemeChoice};
 use crate::theme::{severity_color, severity_icon};
 use crate::view::{
     Filter, Row, build_rows, culprit_label, default_collapsed, find_problem, row_of_entry,
@@ -70,6 +70,9 @@ pub struct ComteApp {
     /// Following the current file as it grows.
     live: Option<LiveTail>,
     settings: Settings,
+    /// The settings as last written to disk, to save only on change.
+    settings_saved: Settings,
+    settings_open: bool,
     /// The comparison report, when comparing the open log (B) with another (A).
     compare: Option<CompareView>,
     report_dialog: Option<ReportDialog>,
@@ -104,15 +107,22 @@ const NOTICE_SECONDS: u64 = 8;
 impl ComteApp {
     pub fn new(cc: &eframe::CreationContext<'_>, open: Option<PathBuf>) -> Self {
         let dev = DevHooks::from_env();
+        let settings = Settings::load();
+        apply_theme(&cc.egui_ctx, settings.theme);
         let mut filter = Filter {
-            show_noise: dev.show_noise,
+            show_noise: settings.show_noise || dev.show_noise,
+            collapse_duplicates: settings.collapse_duplicates,
             ..Filter::default()
         };
         if let Some(search) = &dev.search {
             filter.search = search.clone();
         }
         let mut app = Self {
-            sources: discover_sources(),
+            sources: if dev.no_discovery {
+                Vec::new()
+            } else {
+                discover_sources()
+            },
             loader: Loader::default(),
             current: None,
             load_error: None,
@@ -125,12 +135,18 @@ impl ComteApp {
             scroll_to_section: None,
             focus_search: false,
             save_dialog: None,
-            extra_redactions: String::new(),
-            sessions: discover_sessions(&default_dir()),
+            extra_redactions: settings.also_redact.clone(),
+            sessions: if dev.no_discovery {
+                Vec::new()
+            } else {
+                discover_sessions(&sessions_dir(&settings))
+            },
             notice: None,
             live: None,
             live_activity: None,
-            settings: Settings::load(),
+            settings_saved: settings.clone(),
+            settings,
+            settings_open: dev.settings_open,
             compare: None,
             report_dialog: None,
             ides: None,
@@ -299,7 +315,7 @@ impl ComteApp {
                     Instant::now(),
                 ));
                 self.save_dialog = None;
-                self.sessions = discover_sessions(&default_dir());
+                self.sessions = discover_sessions(&self.sessions_dir());
             }
             Err(err) => {
                 if let Some(dialog) = &mut self.save_dialog {
@@ -352,7 +368,7 @@ impl ComteApp {
             .as_ref()
             .map_or(current.title.as_str(), |s| s.source.as_str());
         let name = default_file_name(title, &chrono::Local::now());
-        let dir = default_dir();
+        let dir = self.sessions_dir();
         let _ = std::fs::create_dir_all(&dir);
         let _ = dialog;
         if let Some(path) = rfd::FileDialog::new()
@@ -367,6 +383,7 @@ impl ComteApp {
     }
 
     fn save_dialog_ui(&mut self, ctx: &egui::Context) {
+        let sessions_folder = self.sessions_dir();
         let Some(dialog) = &mut self.save_dialog else {
             return;
         };
@@ -445,7 +462,7 @@ impl ComteApp {
                 if ui.button("Cancel").clicked() {
                     cancel = true;
                 }
-                ui.label(RichText::new(format!("to {}", default_dir().display())).weak().small());
+                ui.label(RichText::new(format!("to {}", sessions_folder.display())).weak().small());
             });
         });
         if response.should_close() || cancel {
@@ -518,6 +535,12 @@ impl ComteApp {
                 }
                 if self.dev.compare && self.compare.is_none() {
                     self.start_compare(ctx);
+                }
+                let is_editor_log = self.current.as_ref().is_some_and(|c| {
+                    c.session.is_none() && c.path.file_name().is_some_and(|n| n == "Editor.log")
+                });
+                if self.settings.follow_editor_log && is_editor_log && self.live.is_none() {
+                    self.start_live(ctx);
                 }
                 if self.dev.live && self.live.is_none() {
                     self.start_live(ctx);
@@ -734,7 +757,7 @@ impl ComteApp {
         } else if save {
             let title = self.current.as_ref().map_or("log", |c| c.title.as_str());
             let name = report_file_name(title, &chrono::Local::now());
-            let dir = default_dir().with_file_name("reports");
+            let dir = self.sessions_dir().with_file_name("reports");
             let _ = std::fs::create_dir_all(&dir);
             if let Some(path) = rfd::FileDialog::new()
                 .set_title("Save report")
@@ -946,62 +969,158 @@ impl ComteApp {
         }
     }
 
-    fn settings_menu(&mut self, ui: &mut Ui) {
-        let before = self.settings.clone();
-        ui.label(RichText::new("Open code in").strong());
+    fn sessions_dir(&self) -> PathBuf {
+        sessions_dir(&self.settings)
+    }
+
+    /// Writes the settings when something changed since the last save.
+    fn persist_settings(&mut self) {
+        self.settings.also_redact.clone_from(&self.extra_redactions);
+        if self.settings == self.settings_saved {
+            return;
+        }
+        match self.settings.save() {
+            Ok(()) => self.settings_saved = self.settings.clone(),
+            Err(err) => {
+                self.notice = Some((format!("Could not save settings: {err}"), Instant::now()));
+                self.settings_saved = self.settings.clone(); // don't retry every frame
+            }
+        }
+    }
+
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        if !self.settings_open {
+            return;
+        }
+        let mut open = true;
+        let theme_before = self.settings.theme;
+        let sessions_before = self.settings.sessions_dir.clone();
         let unity_choice = self
             .detected_ides()
             .iter()
             .find(|i| i.from_unity)
             .map(DetectedIde::name);
-        for choice in IdeChoice::ALL {
-            let label = match (choice, &unity_choice) {
-                (IdeChoice::Auto, Some(name)) => format!("Auto: {name}, like Unity"),
-                _ => choice.label().to_owned(),
-            };
-            ui.radio_value(&mut self.settings.ide, choice, label);
-        }
-        if self.settings.ide == IdeChoice::Custom {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.settings.custom_command)
-                    .hint_text(r#""C:\path\editor.exe" {file}:{line}"#)
-                    .desired_width(320.0),
-            );
-        }
-        ui.separator();
-        ui.label(RichText::new("Unity project folder").strong());
-        let detected = self
+        let detected_project = self
             .current
             .as_ref()
             .and_then(|c| c.doc.fact(&comte_core::FactKey::ProjectPath))
             .map(str::to_owned);
-        match (&self.settings.project_root, &detected) {
-            (Some(root), _) => {
-                ui.label(root.display().to_string());
-            }
-            (None, Some(path)) => {
-                ui.label(RichText::new(format!("From the log: {path}")).weak());
-            }
-            (None, None) => {
-                ui.label(RichText::new("Not set (Player logs don't name it)").weak());
-            }
+        let default_sessions = default_dir();
+        let settings = &mut self.settings;
+        let extra = &mut self.extra_redactions;
+        let top_center = ctx.content_rect().center_top() + egui::vec2(0.0, 48.0);
+        egui::Window::new("Settings")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(460.0)
+            .pivot(Align2::CENTER_TOP)
+            .default_pos(top_center)
+            .show(ctx, |ui| {
+                ui.label(RichText::new("Open code in").strong());
+                for choice in IdeChoice::ALL {
+                    let label = match (choice, &unity_choice) {
+                        (IdeChoice::Auto, Some(name)) => format!("Auto: {name}, like Unity"),
+                        _ => choice.label().to_owned(),
+                    };
+                    ui.radio_value(&mut settings.ide, choice, label);
+                }
+                if settings.ide == IdeChoice::Custom {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut settings.custom_command)
+                            .hint_text(r#""C:\path\editor.exe" {file}:{line}"#)
+                            .desired_width(f32::INFINITY),
+                    );
+                }
+
+                ui.separator();
+                ui.label(RichText::new("Unity project folder").strong());
+                match (&settings.project_root, &detected_project) {
+                    (Some(root), _) => ui.label(root.display().to_string()),
+                    (None, Some(path)) => {
+                        ui.label(RichText::new(format!("From the log: {path}")).weak())
+                    }
+                    (None, None) => {
+                        ui.label(RichText::new("Not set (Player logs don't name it)").weak())
+                    }
+                };
+                ui.horizontal(|ui| {
+                    if ui.button("Choose…").clicked()
+                        && let Some(folder) = rfd::FileDialog::new()
+                            .set_title("Unity project folder (the one containing Assets)")
+                            .pick_folder()
+                    {
+                        settings.project_root = Some(folder);
+                    }
+                    if settings.project_root.is_some() && ui.button("Clear").clicked() {
+                        settings.project_root = None;
+                    }
+                });
+
+                ui.separator();
+                ui.label(RichText::new("Saved sessions folder").strong());
+                let current = settings
+                    .sessions_dir
+                    .clone()
+                    .unwrap_or_else(|| default_sessions.clone());
+                ui.label(current.display().to_string());
+                ui.horizontal(|ui| {
+                    if ui.button("Choose…").clicked()
+                        && let Some(folder) = rfd::FileDialog::new()
+                            .set_title("Folder for saved sessions")
+                            .pick_folder()
+                    {
+                        settings.sessions_dir = Some(folder);
+                    }
+                    if settings.sessions_dir.is_some() && ui.button("Use the default").clicked() {
+                        settings.sessions_dir = None;
+                    }
+                });
+
+                ui.separator();
+                ui.label(RichText::new("Redaction").strong());
+                ui.label(RichText::new("Always also redact these words (comma-separated):").weak());
+                ui.add(
+                    egui::TextEdit::singleline(extra)
+                        .hint_text("your display name, studio name, …")
+                        .desired_width(f32::INFINITY),
+                );
+
+                ui.separator();
+                ui.label(RichText::new("When a log opens").strong());
+                ui.checkbox(&mut settings.collapse_duplicates, "Collapse duplicates");
+                ui.checkbox(&mut settings.show_noise, "Show engine noise");
+                ui.checkbox(&mut settings.follow_editor_log, "Follow Editor.log live");
+
+                ui.separator();
+                ui.label(RichText::new("Appearance").strong());
+                ui.horizontal(|ui| {
+                    for theme in [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark] {
+                        ui.radio_value(&mut settings.theme, theme, theme.label());
+                    }
+                });
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("Comte Logger {}", env!("CARGO_PKG_VERSION"))).weak(),
+                    );
+                    if let Some(path) = Settings::path() {
+                        ui.label(
+                            RichText::new(format!("· {}", path.display()))
+                                .weak()
+                                .small(),
+                        )
+                        .on_hover_text("Where these settings are stored");
+                    }
+                });
+            });
+        self.settings_open = open;
+        if self.settings.theme != theme_before {
+            apply_theme(ctx, self.settings.theme);
         }
-        ui.horizontal(|ui| {
-            if ui.button("Choose…").clicked()
-                && let Some(folder) = rfd::FileDialog::new()
-                    .set_title("Unity project folder (the one containing Assets)")
-                    .pick_folder()
-            {
-                self.settings.project_root = Some(folder);
-            }
-            if self.settings.project_root.is_some() && ui.button("Clear").clicked() {
-                self.settings.project_root = None;
-            }
-        });
-        if self.settings != before
-            && let Err(err) = self.settings.save()
-        {
-            self.notice = Some((format!("Could not save settings: {err}"), Instant::now()));
+        if self.settings.sessions_dir != sessions_before {
+            self.sessions = discover_sessions(&self.sessions_dir());
         }
     }
 
@@ -1119,9 +1238,13 @@ impl ComteApp {
             {
                 self.open_dialog(ui.ctx());
             }
-            ui.menu_button("⚙", |ui| self.settings_menu(ui))
-                .response
-                .on_hover_text("Settings: code editor, Unity project folder");
+            if ui
+                .selectable_label(self.settings_open, "⚙")
+                .on_hover_text("Settings")
+                .clicked()
+            {
+                self.settings_open = !self.settings_open;
+            }
             let can_reload = self.current.is_some();
             if ui
                 .add_enabled(can_reload, egui::Button::new("⟳ Reload"))
@@ -1684,6 +1807,8 @@ impl eframe::App for ComteApp {
             self.rebuild_rows();
         }
         self.save_dialog_ui(&ctx);
+        self.settings_window(&ctx);
+        self.persist_settings();
         self.report_dialog_ui(&ctx);
         self.drop_overlay(&ctx);
         self.dev.after_frame(
@@ -2064,4 +2189,17 @@ fn file_title(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
+}
+
+/// `Documents\ComteLogger\sessions`, or the folder chosen in settings.
+fn sessions_dir(settings: &Settings) -> PathBuf {
+    settings.sessions_dir.clone().unwrap_or_else(default_dir)
+}
+
+fn apply_theme(ctx: &egui::Context, theme: ThemeChoice) {
+    ctx.set_theme(match theme {
+        ThemeChoice::System => egui::ThemePreference::System,
+        ThemeChoice::Light => egui::ThemePreference::Light,
+        ThemeChoice::Dark => egui::ThemePreference::Dark,
+    });
 }

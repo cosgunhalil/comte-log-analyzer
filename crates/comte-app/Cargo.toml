@@ -6,9 +6,19 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 
+[lib]
+name = "comte_app"
+path = "src/lib.rs"
+
+# The desktop app (a GUI program on Windows: no console window).
 [[bin]]
 name = "comte-logger"
 path = "src/main.rs"
+
+# The command line.
+[[bin]]
+name = "comte"
+path = "src/bin/comte.rs"
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
@@ -26,3 +36,7 @@ workspace = true
 
 [target."cfg(windows)".dependencies]
 winreg = "0.56.0"
+
+[build-dependencies]
+png = "0.18"
+winresource = "0.1.34"

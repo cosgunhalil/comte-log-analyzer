@@ -41,7 +41,7 @@ Comte Logger is a Windows desktop log analyzer for game engines, written in Rust
 - **Editor logs** are always listed, even when missing (`size: None`), so the UI can show them greyed out.
 - **LocalLow** is found as the sibling of `%LOCALAPPDATA%`, falling back to `%USERPROFILE%\AppData\LocalLow`.
 - **File-kind detection** (`comte_core::detect_engine` + `EngineSupport::detect`): read the first 64 lines and ask each engine in turn. A file no engine recognizes opens with the plain-text parser. File names are never trusted, because testers rename files.
-- macOS and Linux roots are wired up in the locator but untested until M12.
+- macOS and Linux roots are wired up in the locator but untested (see §13).
 - Logs that players and QA send usually arrive as loose files, so drag and drop is a first-class way to open one.
 
 ---
@@ -280,7 +280,7 @@ Original plan:
 - **Content**: the full log, or only the entries you can currently see (written as their original lines, so the file is still a valid log).
 - Comte Logger reads the header back when you reopen the file, restoring the note, tags and kind (no detection needed). Line numbers in a reopened session count from the first log line after the header.
 - Note lines are written as `# > text`, so a note can never end the header early. The header also records `source_path`, which is redacted too.
-- Default folder: `Documents\ComteLogger\sessions\<yyyy-MM-dd_HH-mm>_<title>.log`. `Documents` comes from the Windows known-folder API, so OneDrive redirection works. Choosing a custom folder is part of M12's settings.
+- Default folder: `Documents\ComteLogger\sessions\<yyyy-MM-dd_HH-mm>_<title>.log`. `Documents` comes from the Windows known-folder API, so OneDrive redirection works. A different folder can be chosen in Settings (M12).
 - **Save dialog** (toolbar or Ctrl+S): note, tags, whole log or only the entries matching the current filters, Redact on or off, an "Also redact" field for your own words, and a live preview ("106 values will be replaced: 89 user names, 5 tokens, …").
 - The left panel lists the sessions saved in the default folder, with their tags and the note's first line as a tooltip. A reopened session shows a card with its note, tags, origin and redaction status. Saving it again keeps the note and tags.
 - `comte-logger --summary <file>` uses the same loader, so it understands sessions too.
@@ -423,18 +423,20 @@ A short report to paste into Jira, Slack or a pull request, built by `comte-core
 
 | Concern | Crate |
 |---|---|
-| GUI | `eframe`, `egui`, `egui_extras` |
+| GUI | `eframe` / `egui` 0.37 (default wgpu renderer) |
 | Native dialogs, drag and drop | `rfd`, egui file drop |
 | Parsing | `regex`, `std::sync::LazyLock` |
 | Hashing (fingerprints) | built-in FNV-1a 64 (stable across runs, no dependency) |
 | Diff | own fingerprint set comparison |
 | File watching | 250 ms metadata polling (no `notify`; see §2) |
 | Threads | `std::sync::mpsc` |
-| Paths | `directories` |
+| Paths | `directories` (known folders, so OneDrive redirection works) |
 | Settings | `serde`, `toml` |
-| Time | `chrono` |
-| Errors | `thiserror` (libraries), `anyhow` (app) |
-| Our own logs | `tracing`, `tracing-subscriber` |
+| Time | `chrono` (local timestamps) |
+| Registry (Unity's script editor) | `winreg` (Windows only) |
+| Screenshots | `png` (dev hooks; also the exe icon at build time) |
+| Exe icon and version info | `winresource` + the Windows SDK `rc.exe` (build-time) |
+| Errors | `std::io::Error`; no error crates were needed |
 | Tests | unit tests and `insta` snapshots on fixtures |
 
 ---
@@ -457,7 +459,20 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 | M9 | Open in IDE | Clicking a frame opens Rider or VS Code at the line ✅ |
 | M10 | Compare two logs | Editor-prev vs Editor diff view ✅ |
 | M11 | Markdown report export | Report pastes cleanly into Jira or Slack ✅ |
-| M12 | Polish: settings UI, icon, release build | `cargo build --release` gives a working `.exe` |
+| M12 | Polish: settings UI, icon, release build | `cargo build --release` gives a working `.exe` ✅ |
+
+**M12 details:**
+- **Two programs:** `comte-logger.exe` is a GUI program (Windows subsystem 2, no console window), and `comte.exe` is the command line (subsystem 3). Both are thin `main`s over the `comte_app` library.
+- **Icon:** drawn in code (`src/icon_art.rs`) as an indigo tile with four "log lines" whose dots are gray, gray, amber and red. It is the window icon at 64 px, and `build.rs` embeds it into both exes at 16–256 px along with version info. Without a resource compiler (e.g. the GNU toolchain), the build only warns.
+- **Settings window (⚙):**
+  - Code editor, Unity project folder and saved-sessions folder.
+  - "Always also redact" words, shared by the save and report dialogs.
+  - What a newly opened log shows: collapse duplicates, engine noise, follow `Editor.log` live.
+  - Light, dark or the Windows setting.
+
+  Everything is stored in `settings.toml` and written only when something changes.
+- **README** with screenshots taken from the sanitized fixtures in a neutral folder, using the `COMTE_NO_DISCOVERY` hook, so no personal paths or installed games appear.
+- **Release build:** `comte-logger.exe` 16.9 MB (mostly the wgpu renderer), `comte.exe` 2.1 MB.
 
 ---
 
@@ -467,11 +482,13 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 - **The assistant never commits.** Each task ends with a suggested [Conventional Commits](https://www.conventionalcommits.org/) message.
 - Real logs never go into the repo. Fixtures are trimmed and redacted, and `samples/private/` is git-ignored.
 
-## 13. Notes for later milestones
-- **M12 console window:** the binary still uses the console subsystem, so `--list` and `--summary` can print. Launched from Explorer, a console window opens behind the GUI. Fix this in M12, for example with a separate CLI binary or by attaching to the parent console.
-- **M12 settings:** `settings.toml` exists since M9 (IDE choice, custom command, project folder). Add the "Also redact" words, a custom sessions folder and the filter defaults to it, and turn the ⚙ menu into a settings window.
-- **M5 culprit for release builds:** Player frames usually have no file path, so `culprit()` finds no location. The UI should fall back to showing the first user frame's name (for example `Gun.StopShooting()`).
+## 13. Known limits
 - **Compile metric:** this comes from Tundra's own duration. It can differ from the separate `AssetDatabase: script compilation time` line, which Unity sometimes prints before the compile starts.
+- **Multi-line `Debug.Log` messages:** only the last line before the stack trace becomes the message (§4.1).
+- **Native crash formats** are tested with reconstructed fixtures; no real crash log was available.
+- **macOS and Linux** log locations are wired up but untested.
+- **Live tail** copies the document on every update; very large files may need a cheaper snapshot.
+- **Unlabeled names in logs** (e.g. `User info retrieved: <name>`) can only be redacted through "Always also redact".
 
 ## 14. Open questions (for later)
 - macOS and Linux support after v1?
