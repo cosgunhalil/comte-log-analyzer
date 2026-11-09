@@ -105,36 +105,51 @@ impl Redactor {
     /// so they are masked everywhere (e.g. `LicenseClient-<user>`), and any
     /// `extra_user_names` (such as the current Windows user).
     pub fn for_lines<S: AsRef<str>>(lines: &[S], extra_user_names: &[&str]) -> Self {
-        let mut names: Vec<String> = extra_user_names
+        // Names the user gave (or the current account) match in any case.
+        let given: Vec<String> = extra_user_names
             .iter()
             .map(|n| n.trim().to_owned())
             .filter(|n| is_user_name(n))
             .collect();
+        // Names learned from the log match only in the case they appeared in:
+        // a Windows account named "player" must not turn "Unity Player" into
+        // "Unity <user>".
+        let mut learned: Vec<String> = Vec::new();
         for line in lines {
             let line = line.as_ref();
             for caps in WINDOWS_USER_PATH.captures_iter(line) {
-                push_name(&mut names, &caps[2]);
+                push_name(&mut learned, &caps[2]);
             }
             for caps in UNIX_USER_PATH.captures_iter(line) {
-                push_name(&mut names, &caps[2]);
+                push_name(&mut learned, &caps[2]);
             }
             // Player names logged as fields also appear as free text elsewhere.
             for caps in IDENTITY_FIELD.captures_iter(line) {
                 if caps[1].to_ascii_lowercase().contains("name") && caps[3].len() >= 3 {
-                    push_name(&mut names, &caps[3]);
+                    push_name(&mut learned, &caps[3]);
                 }
             }
             for caps in INLINE_ARG.captures_iter(line) {
                 if caps[1].to_ascii_lowercase().contains("username") {
-                    push_name(&mut names, caps[2].trim_matches('"'));
+                    push_name(&mut learned, caps[2].trim_matches('"'));
                 }
             }
         }
-        // Longest first, so "john smith" wins over "john".
-        names.sort_by_key(|n| std::cmp::Reverse(n.len()));
-        let user_names = names
+        learned.retain(|n| !given.iter().any(|g| g.eq_ignore_ascii_case(n)));
+        let mut patterns: Vec<(usize, String)> = given
             .iter()
-            .filter_map(|n| Regex::new(&format!(r"(?i)\b{}\b", regex::escape(n))).ok())
+            .map(|n| (n.len(), format!(r"(?i)\b{}\b", regex::escape(n))))
+            .chain(
+                learned
+                    .iter()
+                    .map(|n| (n.len(), format!(r"\b{}\b", regex::escape(n)))),
+            )
+            .collect();
+        // Longest first, so "john smith" wins over "john".
+        patterns.sort_by_key(|(len, _)| std::cmp::Reverse(*len));
+        let user_names = patterns
+            .iter()
+            .filter_map(|(_, pattern)| Regex::new(pattern).ok())
             .collect();
         Self {
             user_names,
@@ -394,6 +409,28 @@ mod tests {
             "Logged in as jane.doe",
         ]);
         assert_eq!(out[1], "Logged in as <user>");
+    }
+
+    #[test]
+    fn learned_names_match_only_in_their_own_case() {
+        let out = redact(&[
+            "Crash report: C:/Users/player/AppData/Local/Temp/Game/Crashes",
+            "Unity Player started",
+            "player connected",
+        ]);
+        assert_eq!(
+            out[0],
+            "Crash report: C:/Users/<user>/AppData/Local/Temp/Game/Crashes"
+        );
+        assert_eq!(
+            out[1], "Unity Player started",
+            "a capitalized word is not the account"
+        );
+        assert_eq!(out[2], "<user> connected");
+
+        // Names the user typed match in any case.
+        let (typed, _) = redact_lines(&["Unity Player started"], &["player"]);
+        assert_eq!(typed[0], "Unity <user> started");
     }
 
     #[test]

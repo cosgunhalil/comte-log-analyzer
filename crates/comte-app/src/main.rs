@@ -14,6 +14,7 @@ mod ide;
 mod live;
 mod loader;
 mod overview;
+mod report_export;
 mod save;
 mod settings;
 mod theme;
@@ -29,7 +30,9 @@ const USAGE: &str = "Usage:
   comte-logger <log file>           open the desktop app with this file
   comte-logger --list               list logs found on this machine
   comte-logger --summary <log file> print a parse summary
-  comte-logger --compare <A> <B>    print what changed from log A to log B";
+  comte-logger --compare <A> <B>    print what changed from log A to log B
+  comte-logger --report <log file> [--slack] [--no-redact]
+                                    print a Markdown (or Slack) report";
 
 fn main() -> ExitCode {
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
@@ -48,6 +51,24 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             };
             match cli::compare(std::path::Path::new(a), std::path::Path::new(b)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Some("--report") => {
+            let Some(path) = args.get(1) else {
+                eprintln!("{USAGE}");
+                return ExitCode::FAILURE;
+            };
+            let flag = |name: &str| args.iter().skip(2).any(|a| a == name);
+            match cli::report(
+                std::path::Path::new(path),
+                flag("--slack"),
+                !flag("--no-redact"),
+            ) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("error: {err}");

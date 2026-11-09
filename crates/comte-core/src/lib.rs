@@ -12,6 +12,7 @@
 //! - [`insights`]: verdict, most repeated problems, slowest operations.
 //! - [`compare`]: what changed between two logs (new/gone problems, timings).
 //! - [`session`]: the saved-session file format (header with note and tags).
+//! - [`report`]: a pasteable Markdown or Slack report of a log.
 //! - [`redact`]: masks user names, tokens, ids, … before saving or sharing.
 //! - [`tail`]: incremental parsing for live tail ([`TailDocument`]).
 //!
@@ -26,6 +27,7 @@ pub mod model;
 pub mod parser;
 pub mod reader;
 pub mod redact;
+pub mod report;
 pub mod session;
 pub mod source;
 pub mod tail;
@@ -41,6 +43,7 @@ pub use model::{
 pub use parser::{LogParser, ParseEvent, PlainTextParser, SectionStart};
 pub use reader::{LineReader, parse_file, parse_reader, read_head};
 pub use redact::{RedactionReport, Redactor, redact_lines};
+pub use report::{ReportInput, ReportStyle, render_report};
 pub use session::{
     SessionContent, SessionHeader, kind_token, parse_header, parse_kind_token, parse_tags,
     write_session,

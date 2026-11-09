@@ -195,3 +195,43 @@ pub fn compare(a: &Path, b: &Path) -> std::io::Result<()> {
     }
     Ok(())
 }
+
+/// Prints a report of a log (redacted unless asked not to).
+pub fn report(path: &Path, slack: bool, redact: bool) -> std::io::Result<()> {
+    let loaded = load(path, &file_name(path))?;
+    let options = crate::report_export::ReportOptions {
+        style: if slack {
+            comte_core::ReportStyle::Slack
+        } else {
+            comte_core::ReportStyle::Markdown
+        },
+        note: loaded
+            .session
+            .as_ref()
+            .map(|s| s.note.clone())
+            .unwrap_or_default(),
+        tags: loaded
+            .session
+            .as_ref()
+            .map(|s| s.tags.join(", "))
+            .unwrap_or_default(),
+        redact,
+        ..Default::default()
+    };
+    let user = crate::save::current_user_name();
+    let names: Vec<&str> = user.iter().map(String::as_str).collect();
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+    let built = crate::report_export::build_report(&loaded, None, &options, &now, &names);
+    print!("{}", built.text);
+    if let Some(redaction) = built.redaction {
+        eprintln!("redacted: {}", redaction.describe());
+    }
+    Ok(())
+}
+
+fn file_name(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
+}

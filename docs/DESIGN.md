@@ -307,12 +307,31 @@ More rules were added from real logs:
 | Machine names | `WindowsEditor(7,DESKTOP-MUOR995)` | `<host>` |
 | Crash handler user | `UserName: 'player'` | `<user>` |
 
-Names found in identity fields and `-epicusername=` are also masked wherever they appear as free text. Loopback IPs (`127.x`) are kept. Version numbers, package ids (`pkg@1.2.3`), asset GUIDs and Mono assembly hashes are left alone; there are tests for these.
+Names found in identity fields and `-epicusername=` are also masked wherever they appear as free text. Names *learned from the log* match **case-sensitively**, the way they appeared, so a Windows account named `player` doesn't turn "Unity Player" into "Unity <user>" (found in M11). Names you type in "Also redact", and the current Windows user, match in any case. Loopback IPs (`127.x`) are kept. Version numbers, package ids (`pkg@1.2.3`), asset GUIDs and Mono assembly hashes are left alone; there are tests for these.
 
 The rules live in `comte-core::redact` and are tested against real log lines. An opt-in test (`COMTE_REAL_LOG=<file> cargo test -p comte-app -- --ignored`) checks that a real log has no trace of the user left after redaction. All 28 local logs pass except one: Terraforming Mars logs the Epic display name as unlabeled free text. That case is what "Also redact" is for, because no rule can safely guess an unlabeled name.
 
 ### 6.3 Markdown report export
-A short report to paste into Jira or Slack: verdict, info card, the note and tags, the top errors with their culprit frame and a trimmed stack, and the slowest items. It is redacted with the same rules.
+A short report to paste into Jira, Slack or a pull request, built by `comte-core::report::render_report` and opened from **⇪ Report…** in the toolbar. The CLI equivalent is `comte-logger --report <file> [--slack] [--no-redact]`.
+
+- **Content, in order:**
+  1. Title and meta line (kind, Unity version, lines, when it was generated).
+  2. The verdict as a quote.
+  3. Note and tags.
+  4. Problem counts.
+  5. The **top N problems** (default 5), worst first, then most frequent. Each has where it happened, its section path, its first line, and a code block with the message, its detail lines and a **trimmed stack**: your frames with paths, engine and package runs summarized ("… 3 engine/package frames"), at most about 8 lines.
+  6. "…and N more problems".
+  7. **Changes since A**, when a comparison is open and included.
+  8. Timings table, environment table, timeline.
+- **Two styles:**
+  - **Markdown** (headings and tables) for Jira, GitHub and Confluence.
+  - **Slack**: Slack's mrkdwn has no headings or tables, so headings become bold lines and tables become bullet lines.
+- **Safe formatting:** log text always goes into code spans or code blocks (with double backticks when it contains a backtick), and table cells escape `|`.
+- **Crashes:** a native crash's detail lines (symbol-loader output with local paths) are left out; only its stack is shown.
+- **Headlines:** specific exceptions show their type (`NullReferenceException`). A bare `System.Exception` keeps its message, because the type alone says nothing.
+- **Dialog:** style, how many problems, note and tags (prefilled from a reopened session), Redact plus "Also redact" (shared with the save dialog), a live monospace preview, **Copy** (to the clipboard) and **Save .md…** (`Documents\ComteLogger\reports`).
+- **Redaction:** the same rules as sessions. User names are learned from the whole log, then the report is masked line by line.
+- **Tests:** snapshots of full reports (Player in Markdown and Slack, Editor in Markdown).
 
 ---
 
@@ -437,7 +456,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 | M8 | Insights panel | Verdict, counts, slowest items, top repeated messages ✅ |
 | M9 | Open in IDE | Clicking a frame opens Rider or VS Code at the line ✅ |
 | M10 | Compare two logs | Editor-prev vs Editor diff view ✅ |
-| M11 | Markdown report export | Report pastes cleanly into Jira or Slack |
+| M11 | Markdown report export | Report pastes cleanly into Jira or Slack ✅ |
 | M12 | Polish: settings UI, icon, release build | `cargo build --release` gives a working `.exe` |
 
 ---
@@ -452,7 +471,6 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 - **M12 console window:** the binary still uses the console subsystem, so `--list` and `--summary` can print. Launched from Explorer, a console window opens behind the GUI. Fix this in M12, for example with a separate CLI binary or by attaching to the parent console.
 - **M12 settings:** `settings.toml` exists since M9 (IDE choice, custom command, project folder). Add the "Also redact" words, a custom sessions folder and the filter defaults to it, and turn the ⚙ menu into a settings window.
 - **M5 culprit for release builds:** Player frames usually have no file path, so `culprit()` finds no location. The UI should fall back to showing the first user frame's name (for example `Gun.StopShooting()`).
-- **M11 Markdown export:** the report is mostly a rendering of `Insights` plus the session note and tags.
 - **Compile metric:** this comes from Tundra's own duration. It can differ from the separate `AssetDatabase: script compilation time` line, which Unity sometimes prints before the compile starts.
 
 ## 14. Open questions (for later)

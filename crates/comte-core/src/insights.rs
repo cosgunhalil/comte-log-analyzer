@@ -73,6 +73,9 @@ pub struct Insights {
     pub verdict: Verdict,
     /// Warnings and worse, most frequent first (only those seen twice or more).
     pub repeated_problems: Vec<Repeated>,
+    /// Every distinct warning-or-worse problem, worst first, then most
+    /// frequent, then earliest (for reports).
+    pub problems: Vec<Repeated>,
     /// Any message worth reading (engine chatter excluded), most frequent first.
     pub repeated_messages: Vec<Repeated>,
     /// The slowest timed operations, slowest first.
@@ -84,6 +87,7 @@ pub struct Insights {
 impl Insights {
     pub fn of(doc: &LogDocument) -> Self {
         let repeated_problems = repeated(doc, |e| e.severity >= Severity::Warning, 2);
+        let problems = all_problems(doc);
         // Summaries ("Domain reload took …") are operations, covered by timings.
         let repeated_messages = repeated(doc, |e| !e.is_engine_chatter() && !e.summary, 2);
         let timed = timed_metrics(doc);
@@ -93,6 +97,7 @@ impl Insights {
         Self {
             verdict: verdict(doc),
             repeated_problems,
+            problems,
             repeated_messages,
             slowest,
             timings: totals(&timed),
@@ -277,6 +282,30 @@ fn group_by_fingerprint<'a>(
     groups
 }
 
+fn all_problems(doc: &LogDocument) -> Vec<Repeated> {
+    let mut groups = group_by_fingerprint(
+        doc.entries()
+            .iter()
+            .filter(|e| e.severity >= Severity::Warning),
+    );
+    groups.sort_by(|a, b| {
+        b.0.severity
+            .cmp(&a.0.severity)
+            .then(b.1.cmp(&a.1))
+            .then(a.0.id.cmp(&b.0.id))
+    });
+    groups
+        .into_iter()
+        .map(|(entry, count)| Repeated {
+            entry: entry.id,
+            count,
+            severity: entry.severity,
+            headline: entry.headline(90),
+            location: entry.culprit_label(),
+        })
+        .collect()
+}
+
 fn repeated(
     doc: &LogDocument,
     keep: impl Fn(&LogEntry) -> bool,
@@ -437,6 +466,16 @@ mod tests {
             "Save failed happened once"
         );
         assert_eq!(insights.repeated_problems[0].count, 3);
+        let all: Vec<_> = insights
+            .problems
+            .iter()
+            .map(|p| (p.headline.as_str(), p.count))
+            .collect();
+        assert_eq!(
+            all,
+            [("NullReferenceException", 3), ("Save failed", 1)],
+            "exceptions rank above errors"
+        );
     }
 
     #[test]
@@ -571,6 +610,16 @@ mod tests {
             1,
         );
         assert_eq!(e.headline(40), "IOException");
+        let generic = entry(
+            Severity::Exception,
+            Category::Exception,
+            "System.Exception: Steam is not running",
+            1,
+        );
+        assert_eq!(
+            generic.headline(40),
+            "System.Exception: Steam is not running"
+        );
         let long = entry(Severity::Info, Category::UserLog, &"a".repeat(50), 1);
         assert_eq!(long.headline(10).chars().count(), 10);
         let colon = entry(

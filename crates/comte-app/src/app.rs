@@ -32,6 +32,7 @@ use crate::ide::{
 use crate::live::{LiveEvent, LiveTail};
 use crate::loader::{LoadEvent, Loaded, Loader};
 use crate::overview::{Jump, overview};
+use crate::report_export::{BuiltReport, ReportOptions, build_report, report_file_name};
 use crate::save::{
     self, ContentChoice, Prepared, SaveRequest, SessionFile, current_user_name, default_dir,
     default_file_name, discover_sessions, visible_lines,
@@ -71,6 +72,7 @@ pub struct ComteApp {
     settings: Settings,
     /// The comparison report, when comparing the open log (B) with another (A).
     compare: Option<CompareView>,
+    report_dialog: Option<ReportDialog>,
     /// Editors found on this machine; detected on first use.
     ides: Option<Vec<DetectedIde>>,
     /// Lines added by the last live update, and when.
@@ -87,6 +89,14 @@ struct SaveDialog {
     full_lines: usize,
     visible_lines: usize,
     error: Option<String>,
+}
+
+/// State of the "Report" dialog.
+struct ReportDialog {
+    options: ReportOptions,
+    built: BuiltReport,
+    /// Options (and "Also redact" words) the text was built from.
+    built_from: (ReportOptions, String),
 }
 
 const NOTICE_SECONDS: u64 = 8;
@@ -122,6 +132,7 @@ impl ComteApp {
             live_activity: None,
             settings: Settings::load(),
             compare: None,
+            report_dialog: None,
             ides: None,
             dev,
         };
@@ -502,6 +513,9 @@ impl ComteApp {
                 if self.dev.open_selected {
                     self.open_selected();
                 }
+                if self.dev.report {
+                    self.open_report_dialog();
+                }
                 if self.dev.compare && self.compare.is_none() {
                     self.start_compare(ctx);
                 }
@@ -569,6 +583,176 @@ impl ComteApp {
         }
         self.rows_dirty = true;
         self.scroll_to_section = Some(id);
+    }
+
+    // -- report ----------------------------------------------------------------
+
+    fn open_report_dialog(&mut self) {
+        let Some(current) = &self.current else {
+            return;
+        };
+        let mut options = ReportOptions::default();
+        if let Some(session) = &current.session {
+            options.note.clone_from(&session.note);
+            options.tags = session.tags.join(", ");
+        }
+        if self.dev.report_slack {
+            options.style = comte_core::ReportStyle::Slack;
+        }
+        let built = self.build_report(&options);
+        self.report_dialog = Some(ReportDialog {
+            built_from: (options.clone(), self.extra_redactions.clone()),
+            options,
+            built,
+        });
+    }
+
+    fn build_report(&self, options: &ReportOptions) -> BuiltReport {
+        let current = self.current.as_ref().expect("a log is open");
+        let user = current_user_name();
+        let mut names: Vec<&str> = user.iter().map(String::as_str).collect();
+        names.extend(
+            self.extra_redactions
+                .split(',')
+                .map(str::trim)
+                .filter(|w| !w.is_empty()),
+        );
+        let comparison = self
+            .compare
+            .as_ref()
+            .and_then(|c| c.result.as_ref().map(|r| (c.a_title.as_str(), r)));
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+        build_report(current, comparison, options, &now, &names)
+    }
+
+    fn report_dialog_ui(&mut self, ctx: &egui::Context) {
+        let has_comparison = self.compare.as_ref().is_some_and(|c| c.result.is_some());
+        let Some(dialog) = &mut self.report_dialog else {
+            return;
+        };
+        let mut close = false;
+        let mut copy = false;
+        let mut save = false;
+        let extra = &mut self.extra_redactions;
+        let response = egui::Modal::new(egui::Id::unique("report")).show(ctx, |ui| {
+            ui.set_width(720.0);
+            ui.heading("Report");
+            ui.label(
+                RichText::new("A short summary to paste into Jira, Slack or a pull request.")
+                    .weak(),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label("Format:");
+                for style in [
+                    comte_core::ReportStyle::Markdown,
+                    comte_core::ReportStyle::Slack,
+                ] {
+                    ui.radio_value(&mut dialog.options.style, style, style.label());
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Top problems:");
+                ui.add(egui::DragValue::new(&mut dialog.options.max_problems).range(1..=20));
+                if has_comparison {
+                    ui.checkbox(
+                        &mut dialog.options.include_comparison,
+                        "Include the comparison",
+                    );
+                }
+            });
+            ui.label(RichText::new("Note").strong());
+            ui.add(
+                egui::TextEdit::multiline(&mut dialog.options.note)
+                    .hint_text("What happened? How can someone reproduce it?")
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY),
+            );
+            ui.horizontal(|ui| {
+                ui.label("Tags:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut dialog.options.tags)
+                        .hint_text("crash, perf, build 1.2.3")
+                        .desired_width(f32::INFINITY),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut dialog.options.redact, "Redact sensitive values");
+                ui.add_enabled(
+                    dialog.options.redact,
+                    egui::TextEdit::singleline(extra)
+                        .hint_text("also redact: display name, studio name, …")
+                        .desired_width(f32::INFINITY),
+                );
+            });
+            if let Some(redaction) = &dialog.built.redaction {
+                ui.label(RichText::new(format!("Redacted: {}.", redaction.describe())).weak());
+            }
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical()
+                .max_height(330.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut dialog.built.text.as_str())
+                            .font(egui::TextStyle::Monospace)
+                            .desired_width(f32::INFINITY),
+                    );
+                });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("📋 Copy").strong()).clicked() {
+                    copy = true;
+                }
+                if ui.button("💾 Save .md…").clicked() {
+                    save = true;
+                }
+                if ui.button("Close").clicked() {
+                    close = true;
+                }
+            });
+        });
+        if response.should_close() || close {
+            self.report_dialog = None;
+            return;
+        }
+        let inputs = (dialog.options.clone(), self.extra_redactions.clone());
+        if inputs != dialog.built_from {
+            let built = self.build_report(&inputs.0);
+            if let Some(dialog) = &mut self.report_dialog {
+                dialog.built = built;
+                dialog.built_from = inputs;
+            }
+        }
+        let Some(dialog) = &self.report_dialog else {
+            return;
+        };
+        if copy {
+            ctx.copy_text(dialog.built.text.clone());
+            self.notice = Some(("Report copied to the clipboard".to_owned(), Instant::now()));
+            self.report_dialog = None;
+        } else if save {
+            let title = self.current.as_ref().map_or("log", |c| c.title.as_str());
+            let name = report_file_name(title, &chrono::Local::now());
+            let dir = default_dir().with_file_name("reports");
+            let _ = std::fs::create_dir_all(&dir);
+            if let Some(path) = rfd::FileDialog::new()
+                .set_title("Save report")
+                .set_directory(&dir)
+                .set_file_name(&name)
+                .add_filter("Markdown", &["md"])
+                .save_file()
+            {
+                self.notice = Some(match std::fs::write(&path, &dialog.built.text) {
+                    Ok(()) => (
+                        format!("Saved report to {}", path.display()),
+                        Instant::now(),
+                    ),
+                    Err(err) => (format!("Could not save the report: {err}"), Instant::now()),
+                });
+                self.report_dialog = None;
+            }
+        }
     }
 
     // -- compare ---------------------------------------------------------------
@@ -854,7 +1038,7 @@ impl ComteApp {
     // -- input ----------------------------------------------------------------
 
     fn handle_input(&mut self, ctx: &egui::Context) {
-        if self.save_dialog.is_some() {
+        if self.save_dialog.is_some() || self.report_dialog.is_some() {
             return; // the dialog owns the keyboard (Esc closes it)
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::E)) {
@@ -952,6 +1136,13 @@ impl ComteApp {
                 .clicked()
             {
                 self.open_save_dialog();
+            }
+            if ui
+                .add_enabled(can_reload, egui::Button::new("⇪ Report…"))
+                .on_hover_text("A short Markdown or Slack summary to paste or save")
+                .clicked()
+            {
+                self.open_report_dialog();
             }
             if ui
                 .add_enabled(
@@ -1493,6 +1684,7 @@ impl eframe::App for ComteApp {
             self.rebuild_rows();
         }
         self.save_dialog_ui(&ctx);
+        self.report_dialog_ui(&ctx);
         self.drop_overlay(&ctx);
         self.dev.after_frame(
             &ctx,

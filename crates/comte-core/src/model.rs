@@ -351,7 +351,9 @@ impl LogEntry {
     pub fn headline(&self, max: usize) -> String {
         if let Some((name, _)) = self.message.split_once(": ") {
             let short = name.rsplit('.').next().unwrap_or(name);
-            if short.ends_with("Exception") && !short.contains(' ') {
+            // A specific type says what happened; a bare `Exception` doesn't,
+            // so it keeps its message.
+            if short.ends_with("Exception") && short != "Exception" && !short.contains(' ') {
                 return short.to_owned();
             }
         }
