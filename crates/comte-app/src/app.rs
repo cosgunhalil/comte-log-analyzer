@@ -24,6 +24,10 @@ use eframe::egui::{
 use crate::cli::{age, human_size};
 use crate::devtools::DevHooks;
 use crate::engines::discover_sources;
+use crate::ide::{
+    self, DetectedIde, IdeChoice, Launch, custom_launch, detect_ides, launch_for, resolve_source,
+    system_launch,
+};
 use crate::live::{LiveEvent, LiveTail};
 use crate::loader::{LoadEvent, Loaded, Loader};
 use crate::overview::{Jump, overview};
@@ -31,6 +35,7 @@ use crate::save::{
     self, ContentChoice, Prepared, SaveRequest, SessionFile, current_user_name, default_dir,
     default_file_name, discover_sessions, visible_lines,
 };
+use crate::settings::Settings;
 use crate::theme::{severity_color, severity_icon};
 use crate::view::{
     Filter, Row, build_rows, culprit_label, default_collapsed, find_problem, row_of_entry,
@@ -62,6 +67,9 @@ pub struct ComteApp {
     notice: Option<(String, Instant)>,
     /// Following the current file as it grows.
     live: Option<LiveTail>,
+    settings: Settings,
+    /// Editors found on this machine; detected on first use.
+    ides: Option<Vec<DetectedIde>>,
     /// Lines added by the last live update, and when.
     live_activity: Option<(usize, Instant)>,
     dev: DevHooks,
@@ -109,6 +117,8 @@ impl ComteApp {
             notice: None,
             live: None,
             live_activity: None,
+            settings: Settings::load(),
+            ides: None,
             dev,
         };
         // Open what was asked for, or the Editor log: reading it is the main job.
@@ -479,6 +489,9 @@ impl ComteApp {
                 if self.dev.open_save {
                     self.open_save_dialog();
                 }
+                if self.dev.open_selected {
+                    self.open_selected();
+                }
                 if self.dev.live && self.live.is_none() {
                     self.start_live(ctx);
                 }
@@ -545,6 +558,185 @@ impl ComteApp {
         self.scroll_to_section = Some(id);
     }
 
+    // -- open in IDE -----------------------------------------------------------
+
+    /// Folders that relative paths like `Assets/Scripts/A.cs` are tried in.
+    fn project_roots(&self) -> Vec<PathBuf> {
+        let mut roots: Vec<PathBuf> = self.settings.project_root.iter().cloned().collect();
+        if let Some(path) = self
+            .current
+            .as_ref()
+            .and_then(|c| c.doc.fact(&comte_core::FactKey::ProjectPath))
+        {
+            let path = PathBuf::from(path);
+            if path.is_dir() {
+                roots.push(path);
+            }
+        }
+        roots
+    }
+
+    fn detected_ides(&mut self) -> &[DetectedIde] {
+        self.ides.get_or_insert_with(detect_ides)
+    }
+
+    /// The editor files open in, by name, for buttons and tooltips.
+    fn ide_name(&mut self) -> String {
+        let choice = self.settings.ide;
+        match choice {
+            IdeChoice::System => "the default app".to_owned(),
+            IdeChoice::Custom => "your editor".to_owned(),
+            _ => self
+                .chosen_ide(choice)
+                .map_or_else(|| "the default app".to_owned(), |ide| ide.name()),
+        }
+    }
+
+    fn chosen_ide(&mut self, choice: IdeChoice) -> Option<DetectedIde> {
+        let wanted = match choice {
+            IdeChoice::Rider => Some(ide::IdeKind::Rider),
+            IdeChoice::VsCode => Some(ide::IdeKind::VsCode),
+            IdeChoice::VisualStudio => Some(ide::IdeKind::VisualStudio),
+            IdeChoice::Auto => None,
+            IdeChoice::System | IdeChoice::Custom => return None,
+        };
+        self.detected_ides()
+            .iter()
+            .find(|ide| wanted.is_none_or(|kind| ide.kind == kind))
+            .cloned()
+    }
+
+    fn launch_for(
+        &mut self,
+        file: &Path,
+        line: Option<u32>,
+        column: Option<u32>,
+    ) -> Option<Launch> {
+        match self.settings.ide {
+            IdeChoice::System => Some(system_launch(file)),
+            IdeChoice::Custom => custom_launch(&self.settings.custom_command, file, line, column),
+            choice => Some(match self.chosen_ide(choice) {
+                Some(ide) => launch_for(&ide.exe, file, line, column),
+                None => system_launch(file),
+            }),
+        }
+    }
+
+    /// Opens a source location from the log in the chosen editor.
+    fn open_location(&mut self, location: &comte_core::SourceRef) {
+        let roots = self.project_roots();
+        let Some(file) = resolve_source(&location.path, &roots) else {
+            self.notice = Some((
+                format!(
+                    "Can't find {} — choose the Unity project folder in ⚙",
+                    location.path
+                ),
+                Instant::now(),
+            ));
+            return;
+        };
+        let Some(launch) = self.launch_for(&file, location.line, location.column) else {
+            self.notice = Some((
+                "The custom editor command is empty — set it in ⚙".to_owned(),
+                Instant::now(),
+            ));
+            return;
+        };
+        let name = self.ide_name();
+        if self.dev.ide_dry_run {
+            println!("{} {}", launch.program.display(), launch.args.join(" "));
+            self.notice = Some((
+                format!(
+                    "Would run: {} {}",
+                    launch.program.display(),
+                    launch.args.join(" ")
+                ),
+                Instant::now(),
+            ));
+            return;
+        }
+        self.notice = Some(match ide::spawn(&launch) {
+            Ok(()) => (
+                format!("Opened {} in {name}", location.short()),
+                Instant::now(),
+            ),
+            Err(err) => (
+                format!("Could not start {}: {err}", launch.program.display()),
+                Instant::now(),
+            ),
+        });
+    }
+
+    /// Opens the selected entry's culprit (Ctrl+E, double-click).
+    fn open_selected(&mut self) {
+        let location = self
+            .selected
+            .and_then(|id| self.current.as_ref()?.doc.entry(id))
+            .and_then(|e| e.culprit().cloned());
+        if let Some(location) = location {
+            self.open_location(&location);
+        }
+    }
+
+    fn settings_menu(&mut self, ui: &mut Ui) {
+        let before = self.settings.clone();
+        ui.label(RichText::new("Open code in").strong());
+        let unity_choice = self
+            .detected_ides()
+            .iter()
+            .find(|i| i.from_unity)
+            .map(DetectedIde::name);
+        for choice in IdeChoice::ALL {
+            let label = match (choice, &unity_choice) {
+                (IdeChoice::Auto, Some(name)) => format!("Auto: {name}, like Unity"),
+                _ => choice.label().to_owned(),
+            };
+            ui.radio_value(&mut self.settings.ide, choice, label);
+        }
+        if self.settings.ide == IdeChoice::Custom {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.custom_command)
+                    .hint_text(r#""C:\path\editor.exe" {file}:{line}"#)
+                    .desired_width(320.0),
+            );
+        }
+        ui.separator();
+        ui.label(RichText::new("Unity project folder").strong());
+        let detected = self
+            .current
+            .as_ref()
+            .and_then(|c| c.doc.fact(&comte_core::FactKey::ProjectPath))
+            .map(str::to_owned);
+        match (&self.settings.project_root, &detected) {
+            (Some(root), _) => {
+                ui.label(root.display().to_string());
+            }
+            (None, Some(path)) => {
+                ui.label(RichText::new(format!("From the log: {path}")).weak());
+            }
+            (None, None) => {
+                ui.label(RichText::new("Not set (Player logs don't name it)").weak());
+            }
+        }
+        ui.horizontal(|ui| {
+            if ui.button("Choose…").clicked()
+                && let Some(folder) = rfd::FileDialog::new()
+                    .set_title("Unity project folder (the one containing Assets)")
+                    .pick_folder()
+            {
+                self.settings.project_root = Some(folder);
+            }
+            if self.settings.project_root.is_some() && ui.button("Clear").clicked() {
+                self.settings.project_root = None;
+            }
+        });
+        if self.settings != before
+            && let Err(err) = self.settings.save()
+        {
+            self.notice = Some((format!("Could not save settings: {err}"), Instant::now()));
+        }
+    }
+
     fn select(&mut self, id: Option<u64>) {
         self.selected = id;
         self.scroll_to_selected = id.is_some();
@@ -580,6 +772,9 @@ impl ComteApp {
     fn handle_input(&mut self, ctx: &egui::Context) {
         if self.save_dialog.is_some() {
             return; // the dialog owns the keyboard (Esc closes it)
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::E)) {
+            self.open_selected();
         }
         let save = ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::S));
         if save {
@@ -652,6 +847,9 @@ impl ComteApp {
             {
                 self.open_dialog(ui.ctx());
             }
+            ui.menu_button("⚙", |ui| self.settings_menu(ui))
+                .response
+                .on_hover_text("Settings: code editor, Unity project folder");
             let can_reload = self.current.is_some();
             if ui
                 .add_enabled(can_reload, egui::Button::new("⟳ Reload"))
@@ -983,6 +1181,7 @@ impl ComteApp {
         }
 
         let mut clicked_entry: Option<u64> = None;
+        let mut double_clicked: Option<u64> = None;
         let mut toggled_section: Option<u32> = None;
         let selected = self.selected;
         let selected_fingerprint = selected
@@ -1019,6 +1218,9 @@ impl ComteApp {
                                 && selected_fingerprint
                                     == Some((entry.fingerprint, entry.section_id)));
                         paint_entry_row(ui, rect, &response, entry, depth, repeats, is_selected);
+                        if response.double_clicked() {
+                            double_clicked = Some(id);
+                        }
                         if response.clicked() {
                             clicked_entry = Some(id);
                         }
@@ -1035,6 +1237,10 @@ impl ComteApp {
         }
         if let Some(id) = clicked_entry {
             self.selected = Some(id);
+        }
+        if let Some(id) = double_clicked {
+            self.selected = Some(id);
+            self.open_selected();
         }
     }
 
@@ -1053,11 +1259,19 @@ impl ComteApp {
     }
 
     fn details_panel(&mut self, ui: &mut Ui) {
+        if self.current.is_none() {
+            return;
+        }
+        let mut jump = None;
+        let mut back = false;
+        let mut open: Option<comte_core::SourceRef> = None;
+        let links = Links {
+            roots: self.project_roots(),
+            ide: self.ide_name(),
+        };
         let Some(current) = &self.current else {
             return;
         };
-        let mut jump = None;
-        let mut back = false;
         egui::ScrollArea::vertical()
             .id_salt("details")
             .auto_shrink([false, false])
@@ -1078,13 +1292,16 @@ impl ComteApp {
                             back = true;
                         }
                         ui.add_space(4.0);
-                        entry_details(ui, current, entry, repeats);
+                        open = entry_details(ui, current, entry, repeats, &links);
                     }
                     None => jump = overview(ui, current),
                 }
             });
         if back {
             self.select(None);
+        }
+        if let Some(location) = open {
+            self.open_location(&location);
         }
         match jump {
             Some(Jump::Entry(id)) => self.reveal(id),
@@ -1328,7 +1545,38 @@ fn paint_entry_row(
 
 // -- details -----------------------------------------------------------------
 
-fn entry_details(ui: &mut Ui, current: &Loaded, entry: &LogEntry, repeats: u32) {
+/// What details need to turn source locations into "open in IDE" links.
+struct Links {
+    roots: Vec<PathBuf>,
+    /// "Rider", "VS Code", …
+    ide: String,
+}
+
+impl Links {
+    /// A location as a link when its file exists in the project, else as
+    /// plain text. Returns `true` when clicked.
+    fn location(&self, ui: &mut Ui, location: &comte_core::SourceRef, text: String) -> bool {
+        if resolve_source(&location.path, &self.roots).is_some() {
+            ui.link(RichText::new(text).monospace())
+                .on_hover_text(format!("Open in {} (Ctrl+E)", self.ide))
+                .clicked()
+        } else {
+            ui.label(RichText::new(text).monospace().weak())
+                .on_hover_text("Not found in the Unity project folder (choose it in ⚙)");
+            false
+        }
+    }
+}
+
+/// Entry details. Returns a source location the user asked to open.
+fn entry_details(
+    ui: &mut Ui,
+    current: &Loaded,
+    entry: &LogEntry,
+    repeats: u32,
+    links: &Links,
+) -> Option<comte_core::SourceRef> {
+    let mut open = None;
     let color = severity_color(ui.visuals(), entry.severity);
     ui.horizontal(|ui| {
         ui.label(
@@ -1341,6 +1589,15 @@ fn entry_details(ui: &mut Ui, current: &Loaded, entry: &LogEntry, repeats: u32) 
     });
     ui.add_space(4.0);
     ui.label(RichText::new(&entry.message).size(15.0).strong());
+    if let Some(culprit) = entry.culprit()
+        && resolve_source(&culprit.path, &links.roots).is_some()
+        && ui
+            .button(format!("↗ Open {} in {}", culprit.short(), links.ide))
+            .on_hover_text("Ctrl+E, or double-click the entry")
+            .clicked()
+    {
+        open = Some(culprit.clone());
+    }
     if repeats > 1 {
         ui.label(RichText::new(format!("Repeated {repeats} times in this section")).weak());
     }
@@ -1352,7 +1609,9 @@ fn entry_details(ui: &mut Ui, current: &Loaded, entry: &LogEntry, repeats: u32) 
         .show(ui, |ui| {
             if let Some(culprit) = entry.culprit() {
                 ui.label(RichText::new("Where").weak());
-                ui.label(RichText::new(culprit.to_string()).monospace());
+                if links.location(ui, culprit, culprit.to_string()) {
+                    open = Some(culprit.clone());
+                }
                 ui.end_row();
             }
             if let Some(source) = &entry.source
@@ -1395,7 +1654,9 @@ fn entry_details(ui: &mut Ui, current: &Loaded, entry: &LogEntry, repeats: u32) 
     if !entry.stack.is_empty() {
         ui.add_space(8.0);
         ui.label(RichText::new("Stack trace").strong());
-        stack_trace(ui, entry);
+        if let Some(location) = stack_trace(ui, entry, links) {
+            open = Some(location);
+        }
     }
 
     ui.add_space(8.0);
@@ -1414,10 +1675,13 @@ fn entry_details(ui: &mut Ui, current: &Loaded, entry: &LogEntry, repeats: u32) 
                 }
             });
         });
+    open
 }
 
-/// User frames in bold; runs of engine/package frames folded.
-fn stack_trace(ui: &mut Ui, entry: &LogEntry) {
+/// User frames in bold; runs of engine/package frames folded. Locations of
+/// files in the project are links. Returns a location the user clicked.
+fn stack_trace(ui: &mut Ui, entry: &LogEntry, links: &Links) -> Option<comte_core::SourceRef> {
+    let mut open = None;
     let frames = &entry.stack;
     let mut i = 0;
     while i < frames.len() {
@@ -1426,12 +1690,12 @@ fn stack_trace(ui: &mut Ui, entry: &LogEntry) {
             ui.label(RichText::new(&frame.text).strong().monospace())
                 .on_hover_text(&frame.raw);
             if let Some(location) = &frame.location {
-                ui.label(
-                    RichText::new(format!("    {location}"))
-                        .weak()
-                        .small()
-                        .monospace(),
-                );
+                ui.horizontal(|ui| {
+                    ui.add_space(24.0);
+                    if links.location(ui, location, location.to_string()) {
+                        open = Some(location.clone());
+                    }
+                });
             }
             i += 1;
             continue;
@@ -1441,6 +1705,7 @@ fn stack_trace(ui: &mut Ui, entry: &LogEntry) {
             .position(|f| f.kind == FrameKind::User)
             .map_or(frames.len(), |p| i + p);
         let run = &frames[i..run_end];
+        // Package frames (e.g. Library/PackageCache/…) can be opened too.
         let show_frame = |ui: &mut Ui, frame: &comte_core::StackFrame| {
             let kind = match frame.kind {
                 FrameKind::Package => "pkg",
@@ -1453,23 +1718,38 @@ fn stack_trace(ui: &mut Ui, entry: &LogEntry) {
                     .monospace(),
             )
             .on_hover_text(&frame.raw);
+            let location = frame
+                .location
+                .as_ref()
+                .filter(|_| frame.kind == FrameKind::Package)?;
+            let clicked = ui
+                .horizontal(|ui| {
+                    ui.add_space(24.0);
+                    links.location(ui, location, location.to_string())
+                })
+                .inner;
+            clicked.then(|| location.clone())
         };
         if run.len() == 1 {
-            show_frame(ui, &run[0]);
+            if let Some(location) = show_frame(ui, &run[0]) {
+                open = Some(location);
+            }
         } else {
-            egui::CollapsingHeader::new(
+            let clicked = egui::CollapsingHeader::new(
                 RichText::new(format!("{} engine / package frames", run.len())).weak(),
             )
             .id_salt(("frames", entry.id, i))
             .default_open(false)
-            .show(ui, |ui| {
-                for frame in run {
-                    show_frame(ui, frame);
-                }
-            });
+            .show(ui, |ui| run.iter().filter_map(|f| show_frame(ui, f)).last())
+            .body_returned
+            .flatten();
+            if clicked.is_some() {
+                open = clicked;
+            }
         }
         i = run_end;
     }
+    open
 }
 
 fn file_title(path: &Path) -> String {

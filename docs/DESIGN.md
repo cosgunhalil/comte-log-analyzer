@@ -327,10 +327,30 @@ Choose **A** and **B** (by default `Editor-prev.log` vs `Editor.log`). The compa
 
 ## 8. Open in IDE
 
-- Clicking a user frame or a culprit location opens the file at that line.
-- The project root comes from the Editor log (the project path line) or is chosen once in settings.
-- Supported editors, configurable: **Rider** (`rider64.exe --line N file`), **VS Code** (`code -g file:N`), **Visual Studio** (`devenv /edit file`), or a custom command template `{file} {line}`.
-- Player log frames rarely have a path; those frames are not clickable.
+- **How to open a file:** click a location link (the "Where" row, user-frame and package-frame locations), use the "↗ Open TurnView.cs:98 in Rider" button, press **Ctrl+E**, or double-click an entry row.
+- **Links only for files that exist:** a location is a link only when its file is found under a project root. Otherwise it is plain text, with a hint to choose the project folder.
+- **Project roots, tried in order:**
+  1. The folder chosen in ⚙ (remembered).
+  2. The Editor log's `Successfully changed project path to:` fact, if that folder exists.
+
+  A Player log, a log from another machine, or a redacted session needs the folder chosen once.
+- **Which editor (⚙ › "Open code in"):**
+  - **Auto** uses Unity's own External Script Editor, read from `HKCU\Software\Unity Technologies\Unity Editor 5.x\kScriptsDefaultApp_h…` (a NUL-terminated string). On this machine that is Rider. If it isn't set, Auto uses the first installed Rider (standalone, Toolbox or Program Files), then VS Code, then Visual Studio (found with `vswhere`).
+  - Rider, VS Code or Visual Studio, chosen explicitly.
+  - System default (`explorer <file>`).
+  - A custom command template with `{file}`, `{line}` and `{column}` (double quotes group words).
+- **Command lines:**
+
+  | Editor | Command |
+  |---|---|
+  | Rider | `rider64.exe --line N [--column C] file` |
+  | VS Code | `Code.exe --goto file:N[:C]` |
+  | Visual Studio | `devenv.exe /edit file /command "Edit.GoTo N"` |
+
+  `.cmd`/`.bat` launchers run through `cmd /C` without a console window.
+- **Settings file:** `%APPDATA%\ComteLogger\config\settings.toml` (serde + toml). `COMTE_SETTINGS` overrides the path for tests.
+- **Verification:** a dry run (`COMTE_IDE_DRY_RUN=1`) on the real Editor log produced `rider64.exe --line 98 …\Spirit Cabinet\Assets\SpiritCabinet\Scripts\UI\TurnView.cs`. A real launch through a harmless custom command passed the right `file:line`.
+- Release Player frames rarely have a path, so they are not links (the culprit label still shows the frame name).
 
 ---
 
@@ -406,7 +426,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 | M6 | Save session: header, note, tags, redaction, reopen | Round trip keeps the note and tags; redaction tests pass ✅ |
 | M7 | Live tail | New Unity output appears in under 1 s; truncation handled ✅ |
 | M8 | Insights panel | Verdict, counts, slowest items, top repeated messages ✅ |
-| M9 | Open in IDE | Clicking a frame opens Rider or VS Code at the line |
+| M9 | Open in IDE | Clicking a frame opens Rider or VS Code at the line ✅ |
 | M10 | Compare two logs | Editor-prev vs Editor diff view |
 | M11 | Markdown report export | Report pastes cleanly into Jira or Slack |
 | M12 | Polish: settings UI, icon, release build | `cargo build --release` gives a working `.exe` |
@@ -421,7 +441,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 
 ## 13. Notes for later milestones
 - **M12 console window:** the binary still uses the console subsystem, so `--list` and `--summary` can print. Launched from Explorer, a console window opens behind the GUI. Fix this in M12, for example with a separate CLI binary or by attaching to the parent console.
-- **M12 settings:** save the "Also redact" words and a custom sessions folder between runs; today they last only until the app closes.
+- **M12 settings:** `settings.toml` exists since M9 (IDE choice, custom command, project folder). Add the "Also redact" words, a custom sessions folder and the filter defaults to it, and turn the ⚙ menu into a settings window.
 - **M5 culprit for release builds:** Player frames usually have no file path, so `culprit()` finds no location. The UI should fall back to showing the first user frame's name (for example `Gun.StopShooting()`).
 - **M10 compare:** reuse `Insights` for both logs; the comparison is mostly the difference of their repeated groups (by fingerprint) and timing totals.
 - **M11 Markdown export:** the report is mostly a rendering of `Insights` plus the session note and tags.

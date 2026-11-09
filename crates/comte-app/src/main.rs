@@ -9,10 +9,12 @@ mod app;
 mod cli;
 mod devtools;
 mod engines;
+mod ide;
 mod live;
 mod loader;
 mod overview;
 mod save;
+mod settings;
 mod theme;
 mod view;
 
