@@ -24,6 +24,7 @@ use eframe::egui::{
 use crate::cli::{age, human_size};
 use crate::devtools::DevHooks;
 use crate::engines::discover_sources;
+use crate::live::{LiveEvent, LiveTail};
 use crate::loader::{LoadEvent, Loaded, Loader};
 use crate::save::{
     self, ContentChoice, Prepared, SaveRequest, SessionFile, current_user_name, default_dir,
@@ -56,6 +57,10 @@ pub struct ComteApp {
     sessions: Vec<SessionFile>,
     /// A short-lived message for the status bar ("Saved to …").
     notice: Option<(String, Instant)>,
+    /// Following the current file as it grows.
+    live: Option<LiveTail>,
+    /// Lines added by the last live update, and when.
+    live_activity: Option<(usize, Instant)>,
     dev: DevHooks,
 }
 
@@ -98,6 +103,8 @@ impl ComteApp {
             extra_redactions: String::new(),
             sessions: discover_sessions(&default_dir()),
             notice: None,
+            live: None,
+            live_activity: None,
             dev,
         };
         // Open what was asked for, or the Editor log: reading it is the main job.
@@ -122,7 +129,87 @@ impl ComteApp {
 
     fn open(&mut self, path: PathBuf, title: String, ctx: &egui::Context) {
         self.load_error = None;
+        self.stop_live();
         self.loader.start(path, title, ctx);
+    }
+
+    // -- live tail ------------------------------------------------------------
+
+    /// Live tail works on real logs; a saved session never changes.
+    fn can_go_live(&self) -> bool {
+        self.current.as_ref().is_some_and(|c| c.session.is_none())
+    }
+
+    fn start_live(&mut self, ctx: &egui::Context) {
+        if let Some(current) = &self.current
+            && current.session.is_none()
+        {
+            self.live = Some(LiveTail::start(
+                current.path.clone(),
+                current.title.clone(),
+                ctx,
+            ));
+            self.live_activity = None;
+        }
+    }
+
+    fn stop_live(&mut self) {
+        self.live = None;
+        self.live_activity = None;
+    }
+
+    fn poll_live(&mut self, ctx: &egui::Context) {
+        let Some(live) = &self.live else {
+            return;
+        };
+        for event in live.poll() {
+            match event {
+                LiveEvent::Update { loaded, added } => {
+                    self.apply_live_snapshot(loaded);
+                    if added > 0 {
+                        self.live_activity = Some((added, Instant::now()));
+                    }
+                }
+                LiveEvent::Restarted(loaded) => {
+                    self.collapsed = default_collapsed(&loaded.doc);
+                    self.current = Some(loaded);
+                    self.selected = None;
+                    self.rows_dirty = true;
+                    self.notice = Some((
+                        "Log restarted (Unity was restarted); showing the new log".to_owned(),
+                        Instant::now(),
+                    ));
+                }
+                LiveEvent::Failed(error) => {
+                    self.load_error = Some(format!("Live tail stopped: {error}"));
+                    self.stop_live();
+                    return;
+                }
+            }
+        }
+        // Keep the "+n lines, 3 s ago" text fresh.
+        if self.live.is_some() {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
+    }
+
+    /// Shows a newer version of the same log, keeping what the user set up:
+    /// selection, collapsed sections, filters. New quiet sections start
+    /// collapsed like on open.
+    fn apply_live_snapshot(&mut self, loaded: Box<Loaded>) {
+        let known_sections = self.current.as_ref().map_or(0, |c| c.doc.sections().len());
+        for id in default_collapsed(&loaded.doc) {
+            if id as usize >= known_sections {
+                self.collapsed.insert(id);
+            }
+        }
+        if let Some(id) = self.selected
+            && loaded.doc.entry(id).is_none()
+        {
+            self.selected = None;
+        }
+        self.current = Some(loaded);
+        self.rows_dirty = true;
     }
 
     fn open_dialog(&mut self, ctx: &egui::Context) {
@@ -353,6 +440,10 @@ impl ComteApp {
     }
 
     fn reload(&mut self, ctx: &egui::Context) {
+        if self.live.is_some() {
+            self.start_live(ctx); // read again from the start, keep following
+            return;
+        }
         if let Some(current) = &self.current {
             let (path, title) = (current.path.clone(), current.title.clone());
             self.open(path, title, ctx);
@@ -377,6 +468,9 @@ impl ComteApp {
                 }
                 if self.dev.open_save {
                     self.open_save_dialog();
+                }
+                if self.dev.live && self.live.is_none() {
+                    self.start_live(ctx);
                 }
             }
             LoadEvent::Failed { path, error } => {
@@ -532,6 +626,30 @@ impl ComteApp {
             {
                 self.open_save_dialog();
             }
+            let live = self.live.is_some();
+            let live_text = if live {
+                RichText::new("● Live")
+                    .color(ui.visuals().error_fg_color)
+                    .strong()
+            } else {
+                RichText::new("● Live")
+            };
+            let response = ui
+                .add_enabled(
+                    self.can_go_live(),
+                    egui::Button::selectable(live, live_text),
+                )
+                .on_hover_text(
+                    "Follow the file as Unity writes it; new lines appear within a second",
+                )
+                .on_disabled_hover_text("Saved sessions do not change");
+            if response.clicked() {
+                if live {
+                    self.stop_live();
+                } else {
+                    self.start_live(ui.ctx());
+                }
+            }
             ui.separator();
             match &self.current {
                 Some(c) => {
@@ -589,7 +707,17 @@ impl ComteApp {
                 ui.label(format!("Unity {version}"));
             }
             ui.separator();
-            ui.label(format!("parsed in {}", format_duration(c.elapsed)));
+            if self.live.is_some() {
+                let text = match &self.live_activity {
+                    Some((added, at)) => {
+                        format!("● Live · +{added} lines {} s ago", at.elapsed().as_secs())
+                    }
+                    None => "● Live · waiting for new lines".to_owned(),
+                };
+                ui.label(RichText::new(text).color(ui.visuals().error_fg_color));
+            } else {
+                ui.label(format!("parsed in {}", format_duration(c.elapsed)));
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.label(
                     RichText::new("F8 next problem · Ctrl+F search · ↑↓ move")
@@ -790,7 +918,9 @@ impl ComteApp {
         let spacing = ui.spacing().item_spacing.y;
         let mut scroll = egui::ScrollArea::vertical()
             .id_salt("entries")
-            .auto_shrink([false, false]);
+            .auto_shrink([false, false])
+            // While live, stay at the bottom as lines arrive (unless scrolled up).
+            .stick_to_bottom(self.live.is_some());
         if self.scroll_to_selected {
             self.scroll_to_selected = false;
             if let Some(row) = self
@@ -918,6 +1048,7 @@ impl ComteApp {
 impl eframe::App for ComteApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.poll_live(&ctx);
         if let Some(event) = self.loader.poll() {
             self.on_loaded(event, &ctx);
         }

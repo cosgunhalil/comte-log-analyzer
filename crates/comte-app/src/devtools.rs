@@ -9,6 +9,8 @@
 //! - `COMTE_OPEN_SAVE=1`: open the "Save session" dialog after loading, with
 //!   `COMTE_SAVE_NOTE`, `COMTE_SAVE_TAGS` and `COMTE_SAVE_EXTRA` ("Also redact") prefilled.
 //! - `COMTE_SAVE_TO=file.log`: save the session there right away (no file dialog).
+//! - `COMTE_LIVE=1`: turn live tail on once the log is loaded.
+//! - `COMTE_SCREENSHOT_DELAY_MS=4000`: wait this long after loading before the screenshot.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,6 +32,8 @@ pub struct DevHooks {
     pub save_tags: Option<String>,
     pub save_extra: Option<String>,
     pub save_to: Option<PathBuf>,
+    pub live: bool,
+    screenshot_delay: std::time::Duration,
 }
 
 impl DevHooks {
@@ -47,6 +51,12 @@ impl DevHooks {
             save_tags: var("COMTE_SAVE_TAGS"),
             save_extra: var("COMTE_SAVE_EXTRA"),
             save_to: var("COMTE_SAVE_TO").map(PathBuf::from),
+            live: var("COMTE_LIVE").as_deref() == Some("1"),
+            screenshot_delay: std::time::Duration::from_millis(
+                var("COMTE_SCREENSHOT_DELAY_MS")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(1200),
+            ),
             ..Self::default()
         }
     }
@@ -66,7 +76,7 @@ impl DevHooks {
         }
         let loaded_at = *self.loaded_at.get_or_insert_with(std::time::Instant::now);
         // Let layout settle and animations (dialog fade-in) finish.
-        if loaded_at.elapsed() >= std::time::Duration::from_millis(1200) && !self.requested {
+        if loaded_at.elapsed() >= self.screenshot_delay && !self.requested {
             self.requested = true;
             let done = Arc::clone(&self.done);
             ctx.request_screenshot(move |image| {

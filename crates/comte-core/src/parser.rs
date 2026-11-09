@@ -41,11 +41,15 @@ pub trait LogParser: Send {
 
     /// End of input: flush any entry still being built.
     fn finish(&mut self, out: &mut Vec<ParseEvent>);
+
+    /// A copy of this parser in its current state. Live tail uses it to show
+    /// a finished snapshot while the original keeps reading new lines.
+    fn boxed_clone(&self) -> Box<dyn LogParser>;
 }
 
 /// Fallback parser for files no engine recognizes: every non-blank line
 /// becomes an `Info` / `Other` entry.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PlainTextParser;
 
 impl LogParser for PlainTextParser {
@@ -62,6 +66,10 @@ impl LogParser for PlainTextParser {
     }
 
     fn finish(&mut self, _out: &mut Vec<ParseEvent>) {}
+
+    fn boxed_clone(&self) -> Box<dyn LogParser> {
+        Box::new(self.clone())
+    }
 }
 
 #[cfg(test)]

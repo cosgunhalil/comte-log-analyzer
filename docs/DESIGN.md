@@ -112,7 +112,12 @@ pub trait EngineSupport {
 ### Threading
 - The UI thread only draws.
 - A worker thread reads the file (using a byte offset) and sends `ParseEvent` batches over `crossbeam-channel`.
-- Live tail: `notify` watches the file, then the app reads from the last offset. When the file shrinks (Unity restarted and truncated it), the app shows "log restarted" and parses it again.
+- **Live tail** (`comte-app::live` + `comte-core::TailDocument`): a background thread checks the file every 250 ms and reads only the bytes appended since the last offset. A half-written last line waits for its newline.
+  - **Polling instead of `notify`:** a `stat` is nearly free, behaves the same on every file system, and still notices when Unity replaces `Editor.log` on restart, which change notifications can report late.
+  - **Restart detection:** the file got shorter, or its first 512 bytes changed (a replaced file that is already longer). The log is then read again from the start, and the UI says "Log restarted".
+  - **Snapshots:** `TailDocument` keeps the parser running between chunks. For display it finishes a *clone* of the parser (`LogParser::boxed_clone`), so an entry still waiting for its stack trace appears now and is completed correctly later. Tests check that feeding both fixtures in chunks of 1, 2, 17, … bytes, with a snapshot after every chunk, gives exactly the same document as a full parse.
+  - **UI:** the "● Live" toggle (off by default, unavailable for saved sessions) keeps your selection, filters and collapsed sections, and collapses new quiet sections. The list sticks to the bottom unless you scroll up. The status bar shows "Live · +23 lines 4 s ago". F5 re-reads the file while staying live.
+  - **Cost:** each update clones the document and its lines, which is fine for normal Editor logs (tens of MB). Very large files may need a cheaper snapshot later.
 
 ---
 
@@ -359,8 +364,8 @@ Choose **A** and **B** (by default `Editor-prev.log` vs `Editor.log`). The compa
 | Parsing | `regex`, `std::sync::LazyLock` |
 | Hashing (fingerprints) | built-in FNV-1a 64 (stable across runs, no dependency) |
 | Diff | own fingerprint set comparison |
-| File watching | `notify` |
-| Threads | `crossbeam-channel` |
+| File watching | 250 ms metadata polling (no `notify`; see §2) |
+| Threads | `std::sync::mpsc` |
 | Paths | `directories` |
 | Settings | `serde`, `toml` |
 | Time | `chrono` |
@@ -383,7 +388,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 | M4 | Locator, Player discovery and file-kind detection | Lists the real logs on this machine ✅ |
 | M5 | GUI viewer: sources, sections, list, filters, search, details, collapse, noise toggle | `Editor.log` reads clearly ✅ |
 | M6 | Save session: header, note, tags, redaction, reopen | Round trip keeps the note and tags; redaction tests pass ✅ |
-| M7 | Live tail | New Unity output appears in under 1 s; truncation handled |
+| M7 | Live tail | New Unity output appears in under 1 s; truncation handled ✅ |
 | M8 | Insights panel | Verdict, counts, slowest items, top repeated messages |
 | M9 | Open in IDE | Clicking a frame opens Rider or VS Code at the line |
 | M10 | Compare two logs | Editor-prev vs Editor diff view |

@@ -42,6 +42,34 @@ impl Loaded {
     }
 }
 
+/// The parser for a log, and how to describe it.
+pub struct Picked {
+    pub parser: Box<dyn LogParser>,
+    pub kind_label: String,
+    pub kind: Option<(EngineId, LogKind)>,
+}
+
+fn picked(detected: Option<(&dyn comte_core::EngineSupport, LogKind)>) -> Picked {
+    match detected {
+        Some((engine, kind)) => Picked {
+            parser: engine.new_parser(kind),
+            kind_label: format!("{} {}", engine.id(), kind.label()),
+            kind: Some((engine.id(), kind)),
+        },
+        None => Picked {
+            parser: Box::new(PlainTextParser),
+            kind_label: "Plain text".to_owned(),
+            kind: None,
+        },
+    }
+}
+
+/// Detects the engine and kind from a log's first lines.
+pub fn pick_parser(head: &[&str]) -> Picked {
+    let engines = engines();
+    picked(detect_engine(&engines, head))
+}
+
 /// Reads, detects and parses a log (or a saved session) synchronously.
 pub fn load(path: &Path, title: &str) -> io::Result<Loaded> {
     let started = Instant::now();
@@ -69,14 +97,11 @@ pub fn load(path: &Path, title: &str) -> io::Result<Loaded> {
         });
     let head: Vec<&str> = raw.iter().take(DETECT_LINES).map(String::as_str).collect();
     let detected = from_header.or_else(|| detect_engine(&engines, &head));
-    let (mut parser, kind_label): (Box<dyn LogParser>, String) = match detected {
-        Some((engine, kind)) => (
-            engine.new_parser(kind),
-            format!("{} {}", engine.id(), kind.label()),
-        ),
-        None => (Box::new(PlainTextParser), "Plain text".to_owned()),
-    };
-    let kind = detected.map(|(engine, kind)| (engine.id(), kind));
+    let Picked {
+        mut parser,
+        kind_label,
+        kind,
+    } = picked(detected);
 
     let doc = if session.is_some() {
         let body = raw.join("\n");

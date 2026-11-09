@@ -9,6 +9,7 @@ mod app;
 mod cli;
 mod devtools;
 mod engines;
+mod live;
 mod loader;
 mod save;
 mod theme;

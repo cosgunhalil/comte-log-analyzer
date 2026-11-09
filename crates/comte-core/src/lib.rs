@@ -11,6 +11,7 @@
 //! - [`fingerprint`]: stable hashes used to collapse duplicate entries.
 //! - [`session`]: the saved-session file format (header with note and tags).
 //! - [`redact`]: masks user names, tokens, ids, … before saving or sharing.
+//! - [`tail`]: incremental parsing for live tail ([`TailDocument`]).
 //!
 //! Line numbers are **1-based** everywhere; line ranges are half-open (`start..end`).
 
@@ -23,6 +24,7 @@ pub mod reader;
 pub mod redact;
 pub mod session;
 pub mod source;
+pub mod tail;
 
 pub use document::LogDocument;
 pub use engine::{DETECT_LINES, EngineSupport, LogLocator, detect_engine};
@@ -38,3 +40,4 @@ pub use session::{
     write_session,
 };
 pub use source::{EngineId, LogKind, LogSource, SourceRole};
+pub use tail::TailDocument;

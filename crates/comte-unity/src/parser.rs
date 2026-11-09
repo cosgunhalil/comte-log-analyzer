@@ -174,7 +174,7 @@ enum Block {
 /// Most lines a native crash entry absorbs when the log has no end marker.
 const MAX_CRASH_LINES: usize = 400;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Pending {
     entry: LogEntry,
     mode: Mode,
@@ -243,7 +243,7 @@ fn summary(category: Category, message: impl Into<String>, n: usize) -> LogEntry
 }
 
 /// The shared Unity parser. Use [`EditorParser`] or [`PlayerParser`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UnityParser {
     flavor: Flavor,
     pending: Option<Pending>,
@@ -330,6 +330,8 @@ impl UnityParser {
         let before = n.saturating_sub(1);
         self.close_section(SectionKind::PlayMode, before, None, out);
         self.close_section(SectionKind::Startup, before, None, out);
+        // Entering play mode means the editor was not shutting down after all.
+        self.close_section(SectionKind::Shutdown, before, None, out);
         self.play_mode_count += 1;
         self.play_scene_loaded = false;
         let title = format!("Play mode #{}", self.play_mode_count);
@@ -1047,12 +1049,16 @@ impl LogParser for UnityParser {
         self.flush(out);
         // Sections still open are closed at the last line by `LogDocument::finish`.
     }
+
+    fn boxed_clone(&self) -> Box<dyn LogParser> {
+        Box::new(self.clone())
+    }
 }
 
 macro_rules! flavored_parser {
     ($(#[$doc:meta])* $name:ident => $flavor:expr) => {
         $(#[$doc])*
-        #[derive(Debug)]
+        #[derive(Debug, Clone)]
         pub struct $name(UnityParser);
 
         impl $name {
@@ -1074,6 +1080,10 @@ macro_rules! flavored_parser {
 
             fn finish(&mut self, out: &mut Vec<ParseEvent>) {
                 self.0.finish(out);
+            }
+
+            fn boxed_clone(&self) -> Box<dyn LogParser> {
+                Box::new(self.clone())
             }
         }
     };
@@ -1588,6 +1598,23 @@ Memory consumption went from 141.1 MB to 138.1 MB.
         );
         assert_eq!(doc.entries()[1].details.len(), 1);
         assert_eq!(doc.metrics().len(), 2);
+    }
+
+    #[test]
+    fn play_mode_after_shutdown_marker_is_not_nested_in_it() {
+        let doc = parse(
+            "Input System module state changed to: ShutdownInProgress.
+Reloading assemblies for play mode.
+hello
+",
+        );
+        let play = doc
+            .sections()
+            .iter()
+            .find(|s| s.kind == SectionKind::PlayMode)
+            .unwrap();
+        assert_eq!(play.depth, 0);
+        assert_eq!(play.parent, None);
     }
 
     #[test]
