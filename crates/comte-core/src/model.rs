@@ -338,6 +338,32 @@ impl LogEntry {
         self.stack.iter().filter(|f| f.kind == FrameKind::User)
     }
 
+    /// Short "where" label: `File.cs:42`, or for release builds without paths
+    /// the first frame of the game's own code (`Gun.StopShooting()`).
+    pub fn culprit_label(&self) -> Option<String> {
+        self.culprit()
+            .map(SourceRef::short)
+            .or_else(|| self.user_frames().next().map(|f| f.text.clone()))
+    }
+
+    /// A short headline: the exception type for exceptions
+    /// (`NullReferenceException`), otherwise the message cut to `max` chars.
+    pub fn headline(&self, max: usize) -> String {
+        if let Some((name, _)) = self.message.split_once(": ") {
+            let short = name.rsplit('.').next().unwrap_or(name);
+            if short.ends_with("Exception") && !short.contains(' ') {
+                return short.to_owned();
+            }
+        }
+        let message = self.message.trim();
+        if message.chars().count() <= max {
+            message.to_owned()
+        } else {
+            let cut: String = message.chars().take(max.saturating_sub(1)).collect();
+            format!("{}…", cut.trim_end())
+        }
+    }
+
     /// Number of raw lines this entry spans.
     pub fn line_count(&self) -> usize {
         self.line_range.len()

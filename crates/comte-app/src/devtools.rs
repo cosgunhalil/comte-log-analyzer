@@ -3,7 +3,8 @@
 //! clicking around:
 //!
 //! - `COMTE_SCREENSHOT=out.png`: once a log is loaded, save a screenshot and quit.
-//! - `COMTE_SELECT=problem`: select the first warning or error after loading.
+//! - `COMTE_SELECT=problem`: select the first warning or error after loading;
+//!   `COMTE_SELECT=verdict`: follow the overview's "Show it" link.
 //! - `COMTE_SEARCH=text`: start with this search text.
 //! - `COMTE_NOISE=1`: start with engine noise shown.
 //! - `COMTE_OPEN_SAVE=1`: open the "Save session" dialog after loading, with
@@ -25,6 +26,7 @@ pub struct DevHooks {
     requested: bool,
     done: Arc<AtomicBool>,
     pub select_problem: bool,
+    pub select_verdict: bool,
     pub search: Option<String>,
     pub show_noise: bool,
     pub open_save: bool,
@@ -42,6 +44,7 @@ impl DevHooks {
         Self {
             screenshot: var("COMTE_SCREENSHOT").map(PathBuf::from),
             select_problem: var("COMTE_SELECT").as_deref() == Some("problem"),
+            select_verdict: var("COMTE_SELECT").as_deref() == Some("verdict"),
             search: var("COMTE_SEARCH"),
             show_noise: var("COMTE_NOISE").as_deref() == Some("1"),
             open_save: var("COMTE_OPEN_SAVE").as_deref() == Some("1")

@@ -7,8 +7,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use comte_core::{
-    DETECT_LINES, EngineId, LogDocument, LogKind, LogParser, PlainTextParser, SessionHeader,
-    detect_engine, parse_header, parse_kind_token, parse_reader,
+    DETECT_LINES, EngineId, Insights, LogDocument, LogKind, LogParser, PlainTextParser,
+    SessionHeader, detect_engine, parse_header, parse_kind_token, parse_reader,
 };
 
 use crate::engines::engines;
@@ -27,6 +27,8 @@ pub struct Loaded {
     pub session: Option<SessionHeader>,
     pub doc: LogDocument,
     pub index: DocIndex,
+    /// Verdict, repeats and timings, computed once per (re)load.
+    pub insights: Insights,
     /// The log's lines (lossy UTF-8) without any session header; line `n`
     /// of the document is `raw[n - 1]`.
     pub raw: Vec<String>,
@@ -110,6 +112,7 @@ pub fn load(path: &Path, title: &str) -> io::Result<Loaded> {
         parse_reader(Cursor::new(&bytes), parser.as_mut())?
     };
     let index = DocIndex::new(&doc);
+    let insights = Insights::of(&doc);
     let kind_label = if session.is_some() {
         format!("{kind_label} · saved session")
     } else {
@@ -123,6 +126,7 @@ pub fn load(path: &Path, title: &str) -> io::Result<Loaded> {
         session,
         doc,
         index,
+        insights,
         raw,
         elapsed: started.elapsed(),
     })

@@ -1,0 +1,18 @@
+---
+source: crates/comte-unity/tests/insights_fixtures.rs
+expression: render(&doc)
+---
+verdict: Crashed | Crashed in Scene #3
+  - Last error before it: NullReferenceException at Gun.StopShooting()
+  - Crashed in game code: SampleGame_Enemies_EnemySpawner_Spawn_m3F2A (GameAssembly)
+  -> L75
+repeated problems:
+repeated messages:
+slowest:
+  Startup 8.14 s (metric L13, entry L13)
+  Scene unload 244 ms (metric L62, entry L62)
+  Scene unload 19 ms (metric L34, entry L34)
+  Scene unload 9.5 ms (metric L17, entry L17)
+timings:
+  Startup: 1× total 8.14 s avg 8.14 s max 8.14 s
+  Scene unload: 3× total 273 ms avg 91 ms max 244 ms

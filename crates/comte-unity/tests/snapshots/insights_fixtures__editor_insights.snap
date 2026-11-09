@@ -1,0 +1,25 @@
+---
+source: crates/comte-unity/tests/insights_fixtures.rs
+expression: render(&doc)
+---
+verdict: Errors | 5 errors
+  - Script compilation failed after 14.60 s (1 compiler error)
+  - First error: UnityConnectWebRequestException
+  -> L98
+repeated problems:
+repeated messages:
+slowest:
+  Script compilation 14.60 s (metric L202, entry L202)
+  Startup 9.88 s (metric L95, entry L95)
+  Asset refresh 3.53 s (metric L84, entry L84)
+  Domain reload 2.50 s (metric L114, entry L114)
+  Domain reload 1.82 s (metric L81, entry L81)
+  Domain reload 1.30 s (metric L55, entry L55)
+  Scene load 412 ms (metric L119, entry L117)
+  Scene load 205 ms (metric L108, entry L105)
+timings:
+  Startup: 1× total 9.88 s avg 9.88 s max 9.88 s
+  Script compilation: 2× total 14.72 s avg 7.36 s max 14.60 s
+  Domain reload: 3× total 5.63 s avg 1.88 s max 2.50 s
+  Asset refresh: 2× total 3.54 s avg 1.77 s max 3.53 s
+  Scene load: 3× total 641 ms avg 214 ms max 412 ms

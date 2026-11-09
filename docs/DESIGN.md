@@ -230,7 +230,23 @@ Checked against 30 real Player logs (Unity 2019.4 to 6000.x builds): every file 
 
 ## 5. Insights panel
 
-Computed after parsing:
+Built as `comte-core::insights::Insights::of(&doc)`, computed once per load or live update and shown as the **Overview** in the right panel whenever nothing is selected (a "← Overview" button and Esc go back to it).
+
+**What's implemented:**
+- **Verdict:**
+  - *Crashed in <section around the crash>*: names the last error before the crash and the first game-code frame of the native stack.
+  - *N errors (M different)*: mentions a failed script compilation and its compiler error count. Then either "Most frequent: X ×n at File.cs:42" or, when nothing repeats, "First error: X", because the first error is usually the root cause.
+  - *No errors, N warnings*.
+  - *Clean*.
+- **Most repeated problems:** warnings or worse, seen at least twice, top 5.
+- **Most repeated messages:** your own logs, excluding engine chatter and the app's summaries (those are operations, covered by timings).
+- **Slowest operations:** the top 8 timed operations as bars.
+- **Timings table:** count, total, average and slowest per kind.
+- **Environment** facts, and the **Timeline** as clickable section links.
+- Every item jumps to its entry: sections around it open, and if the current filters hide it, the filters are reset so it can be shown.
+- On the real Editor log this surfaced a 23-second asset refresh (11 refreshes, 29 s in total).
+
+Original plan:
 - **Verdict line**, for example: "💥 Crashed in Play mode #3 after NullReferenceException in EnemySpawner.cs:57", or "✅ Clean session, 2 warnings".
 - Counts by severity and category.
 - **Top repeated messages** (by fingerprint) with counts.
@@ -389,7 +405,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 | M5 | GUI viewer: sources, sections, list, filters, search, details, collapse, noise toggle | `Editor.log` reads clearly ✅ |
 | M6 | Save session: header, note, tags, redaction, reopen | Round trip keeps the note and tags; redaction tests pass ✅ |
 | M7 | Live tail | New Unity output appears in under 1 s; truncation handled ✅ |
-| M8 | Insights panel | Verdict, counts, slowest items, top repeated messages |
+| M8 | Insights panel | Verdict, counts, slowest items, top repeated messages ✅ |
 | M9 | Open in IDE | Clicking a frame opens Rider or VS Code at the line |
 | M10 | Compare two logs | Editor-prev vs Editor diff view |
 | M11 | Markdown report export | Report pastes cleanly into Jira or Slack |
@@ -407,7 +423,8 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 - **M12 console window:** the binary still uses the console subsystem, so `--list` and `--summary` can print. Launched from Explorer, a console window opens behind the GUI. Fix this in M12, for example with a separate CLI binary or by attaching to the parent console.
 - **M12 settings:** save the "Also redact" words and a custom sessions folder between runs; today they last only until the app closes.
 - **M5 culprit for release builds:** Player frames usually have no file path, so `culprit()` finds no location. The UI should fall back to showing the first user frame's name (for example `Gun.StopShooting()`).
-- **M8 insights:** the crash verdict can use the section tree directly. A Crash section nested in "Scene #3" means "crashed in scene #3".
+- **M10 compare:** reuse `Insights` for both logs; the comparison is mostly the difference of their repeated groups (by fingerprint) and timing totals.
+- **M11 Markdown export:** the report is mostly a rendering of `Insights` plus the session note and tags.
 - **Compile metric:** this comes from Tundra's own duration. It can differ from the separate `AssetDatabase: script compilation time` line, which Unity sometimes prints before the compile starts.
 
 ## 14. Open questions (for later)

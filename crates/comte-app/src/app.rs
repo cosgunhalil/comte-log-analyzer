@@ -26,6 +26,7 @@ use crate::devtools::DevHooks;
 use crate::engines::discover_sources;
 use crate::live::{LiveEvent, LiveTail};
 use crate::loader::{LoadEvent, Loaded, Loader};
+use crate::overview::{Jump, overview};
 use crate::save::{
     self, ContentChoice, Prepared, SaveRequest, SessionFile, current_user_name, default_dir,
     default_file_name, discover_sessions, visible_lines,
@@ -50,6 +51,8 @@ pub struct ComteApp {
     rows_dirty: bool,
     selected: Option<u64>,
     scroll_to_selected: bool,
+    /// Scroll the list to this section header (after a timeline click).
+    scroll_to_section: Option<u32>,
     focus_search: bool,
     save_dialog: Option<SaveDialog>,
     /// "Also redact" words, kept between saves.
@@ -98,6 +101,7 @@ impl ComteApp {
             rows_dirty: false,
             selected: None,
             scroll_to_selected: false,
+            scroll_to_section: None,
             focus_search: false,
             save_dialog: None,
             extra_redactions: String::new(),
@@ -466,6 +470,12 @@ impl ComteApp {
                     self.rebuild_rows();
                     self.jump_to_problem(true);
                 }
+                if self.dev.select_verdict
+                    && let Some(id) = self.current.as_ref().and_then(|c| c.insights.verdict.entry)
+                {
+                    self.rebuild_rows();
+                    self.reveal(id);
+                }
                 if self.dev.open_save {
                     self.open_save_dialog();
                 }
@@ -495,13 +505,44 @@ impl ComteApp {
         let Some(id) = find_problem(&current.doc, &self.filter, self.selected, forward) else {
             return;
         };
+        self.reveal(id);
+    }
+
+    /// Selects entry `id`, opening the sections around it, and scrolls to it.
+    fn reveal(&mut self, id: u64) {
+        let Some(current) = &self.current else {
+            return;
+        };
         let section = current.doc.entry(id).and_then(|e| e.section_id);
         for ancestor in section_path(&current.doc, section) {
             if self.collapsed.remove(&ancestor) {
                 self.rows_dirty = true;
             }
         }
+        // A jump target hidden by the filters (e.g. engine noise) is shown anyway.
+        if let Some(entry) = current.doc.entry(id) {
+            let needle = self.filter.search.trim().to_lowercase();
+            if !self.filter.matches(entry, &needle) {
+                self.filter = Filter {
+                    show_noise: true,
+                    ..Filter::default()
+                };
+                self.rows_dirty = true;
+            }
+        }
         self.select(Some(id));
+    }
+
+    /// Opens section `id` (and its parents) and scrolls to its header.
+    fn reveal_section(&mut self, id: u32) {
+        let Some(current) = &self.current else {
+            return;
+        };
+        for ancestor in section_path(&current.doc, Some(id)) {
+            self.collapsed.remove(&ancestor);
+        }
+        self.rows_dirty = true;
+        self.scroll_to_section = Some(id);
     }
 
     fn select(&mut self, id: Option<u64>) {
@@ -921,6 +962,15 @@ impl ComteApp {
             .auto_shrink([false, false])
             // While live, stay at the bottom as lines arrive (unless scrolled up).
             .stick_to_bottom(self.live.is_some());
+        if let Some(section) = self.scroll_to_section.take()
+            && let Some(row) = self
+                .rows
+                .iter()
+                .position(|r| matches!(r, Row::Section { id, .. } if *id == section))
+        {
+            let target = row as f32 * (row_height + spacing) - ui.available_height() / 4.0;
+            scroll = scroll.vertical_scroll_offset(target.max(0.0));
+        }
         if self.scroll_to_selected {
             self.scroll_to_selected = false;
             if let Some(row) = self
@@ -1006,6 +1056,8 @@ impl ComteApp {
         let Some(current) = &self.current else {
             return;
         };
+        let mut jump = None;
+        let mut back = false;
         egui::ScrollArea::vertical()
             .id_salt("details")
             .auto_shrink([false, false])
@@ -1018,11 +1070,27 @@ impl ComteApp {
                                 Row::Section { .. } => None,
                             })
                             .unwrap_or(1);
+                        if ui
+                            .small_button("← Overview")
+                            .on_hover_text("Back to the overview (Esc)")
+                            .clicked()
+                        {
+                            back = true;
+                        }
+                        ui.add_space(4.0);
                         entry_details(ui, current, entry, repeats);
                     }
-                    None => info_card(ui, current),
+                    None => jump = overview(ui, current),
                 }
             });
+        if back {
+            self.select(None);
+        }
+        match jump {
+            Some(Jump::Entry(id)) => self.reveal(id),
+            Some(Jump::Section(id)) => self.reveal_section(id),
+            None => {}
+        }
     }
 
     fn drop_overlay(&self, ctx: &egui::Context) {
@@ -1402,136 +1470,6 @@ fn stack_trace(ui: &mut Ui, entry: &LogEntry) {
         }
         i = run_end;
     }
-}
-
-/// Shown when no entry is selected: what this log is about.
-/// Note, tags and origin of a reopened saved session.
-fn session_card(ui: &mut Ui, session: &comte_core::SessionHeader) {
-    egui::Frame::group(ui.style())
-        .fill(ui.visuals().faint_bg_color)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new("📝 Saved session").strong());
-            if !session.tags.is_empty() {
-                ui.horizontal_wrapped(|ui| {
-                    for tag in &session.tags {
-                        egui::Frame::new()
-                            .fill(ui.visuals().selection.bg_fill)
-                            .corner_radius(8.0)
-                            .inner_margin(egui::Margin::symmetric(8, 2))
-                            .show(ui, |ui| {
-                                ui.label(RichText::new(tag).small().strong());
-                            });
-                    }
-                });
-            }
-            if !session.note.is_empty() {
-                ui.add_space(4.0);
-                ui.label(&session.note);
-            }
-            ui.add_space(4.0);
-            let content = match &session.content {
-                comte_core::SessionContent::Full => "whole log".to_owned(),
-                comte_core::SessionContent::Filtered(d) => format!("filtered: {d}"),
-            };
-            let redacted = match session.redacted {
-                Some(n) => format!("redacted ({n} values)"),
-                None => "not redacted".to_owned(),
-            };
-            ui.label(
-                RichText::new(format!(
-                    "From {} · saved {}\n{content} · {redacted}",
-                    session.source, session.saved_at
-                ))
-                .weak()
-                .small(),
-            );
-        });
-    ui.add_space(10.0);
-}
-
-fn info_card(ui: &mut Ui, current: &Loaded) {
-    if let Some(session) = &current.session {
-        session_card(ui, session);
-    }
-    ui.label(RichText::new(&current.title).size(17.0).strong());
-    ui.label(
-        RichText::new(format!(
-            "{} · {}",
-            current.kind_label,
-            current.path.display()
-        ))
-        .weak()
-        .small(),
-    );
-    ui.add_space(10.0);
-
-    let facts = current.doc.facts();
-    if !facts.is_empty() {
-        egui::Grid::new("facts")
-            .num_columns(2)
-            .spacing([12.0, 4.0])
-            .show(ui, |ui| {
-                let mut seen = HashSet::new();
-                for fact in facts {
-                    if seen.insert(fact.key.clone()) {
-                        ui.label(RichText::new(fact.key.label()).weak());
-                        ui.label(&fact.value);
-                        ui.end_row();
-                    }
-                }
-            });
-        ui.add_space(10.0);
-    }
-
-    let counts = current.doc.counts();
-    ui.label(RichText::new("Problems").strong());
-    let visuals = ui.visuals().clone();
-    for (severity, count) in [
-        (Severity::Crash, counts.crash),
-        (Severity::Exception, counts.exception),
-        (Severity::Error, counts.error),
-        (Severity::Warning, counts.warning),
-    ] {
-        if count > 0 {
-            ui.label(
-                RichText::new(format!(
-                    "{} {count} {}",
-                    severity_icon(severity),
-                    severity.label().to_lowercase()
-                ))
-                .color(severity_color(&visuals, severity)),
-            );
-        }
-    }
-    if counts.errors() + counts.warning == 0 {
-        ui.label(RichText::new("✔ No warnings or errors").weak());
-    }
-
-    let roots: Vec<&Section> = current.doc.root_sections().collect();
-    if !roots.is_empty() {
-        ui.add_space(10.0);
-        ui.label(RichText::new("Timeline").strong());
-        for section in roots {
-            let duration = section
-                .duration
-                .map(|d| format!("  {}", format_duration(d)))
-                .unwrap_or_default();
-            let problems = section.counts.errors() + section.counts.warning;
-            let marker = if problems > 0 {
-                format!("  ({problems} problems)")
-            } else {
-                String::new()
-            };
-            ui.label(format!("• {}{duration}{marker}", section.title));
-        }
-    }
-    ui.add_space(10.0);
-    ui.label(
-        RichText::new("Select an entry to see its details. F8 jumps to the next problem.")
-            .weak()
-            .small(),
-    );
 }
 
 fn file_title(path: &Path) -> String {

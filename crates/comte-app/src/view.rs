@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use comte_core::{Category, FrameKind, LogDocument, LogEntry, SectionKind, Severity};
+use comte_core::{Category, LogDocument, LogEntry, SectionKind, Severity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Item {
@@ -286,23 +286,18 @@ pub fn row_of_entry(rows: &[Row], doc: &LogDocument, id: u64) -> Option<usize> {
         })
 }
 
-/// Short "where" label for an entry row: `File.cs:42`, or for release builds
-/// without paths the first frame of the game's own code.
+/// Short "where" label for an entry row (see [`LogEntry::culprit_label`]).
 pub fn culprit_label(entry: &LogEntry) -> Option<String> {
-    entry.culprit().map(|c| c.short()).or_else(|| {
-        entry
-            .stack
-            .iter()
-            .find(|f| f.kind == FrameKind::User)
-            .map(|f| f.text.clone())
-    })
+    entry.culprit_label()
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use comte_core::{LogEntry, ParseEvent, SectionKind, SectionStart, SourceRef, StackFrame};
+    use comte_core::{
+        FrameKind, LogEntry, ParseEvent, SectionKind, SectionStart, SourceRef, StackFrame,
+    };
 
     use super::*;
 

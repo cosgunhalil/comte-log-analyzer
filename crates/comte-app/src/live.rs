@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use comte_core::{DETECT_LINES, TailDocument};
+use comte_core::{DETECT_LINES, Insights, TailDocument};
 use eframe::egui;
 
 use crate::loader::{Loaded, Picked, pick_parser};
@@ -200,6 +200,7 @@ impl TailState {
             kind_label: self.picked_label.clone(),
             kind: self.kind,
             session: None,
+            insights: Insights::of(&doc),
             doc,
             index,
             raw: self.tail.lines().to_vec(),

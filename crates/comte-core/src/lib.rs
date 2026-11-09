@@ -9,6 +9,7 @@
 //! - [`source`]: descriptions of log files on disk ([`LogSource`]).
 //! - [`reader`]: lossy, line-oriented file reading that feeds a parser.
 //! - [`fingerprint`]: stable hashes used to collapse duplicate entries.
+//! - [`insights`]: verdict, most repeated problems, slowest operations.
 //! - [`session`]: the saved-session file format (header with note and tags).
 //! - [`redact`]: masks user names, tokens, ids, … before saving or sharing.
 //! - [`tail`]: incremental parsing for live tail ([`TailDocument`]).
@@ -18,6 +19,7 @@
 pub mod document;
 pub mod engine;
 pub mod fingerprint;
+pub mod insights;
 pub mod model;
 pub mod parser;
 pub mod reader;
@@ -28,6 +30,7 @@ pub mod tail;
 
 pub use document::LogDocument;
 pub use engine::{DETECT_LINES, EngineSupport, LogLocator, detect_engine};
+pub use insights::{Insights, Repeated, Timed, TimingTotal, Verdict, VerdictKind};
 pub use model::{
     Category, Fact, FactKey, FrameKind, LogEntry, Metric, MetricKind, MetricValue, Section,
     SectionKind, Severity, SeverityCounts, SourceRef, StackFrame, format_duration,
