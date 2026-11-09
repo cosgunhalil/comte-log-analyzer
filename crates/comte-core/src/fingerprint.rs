@@ -38,7 +38,7 @@ impl Fnv1a {
 pub fn of_entry(entry: &LogEntry) -> u64 {
     let mut hasher = Fnv1a::new();
     hasher.field(entry.category.label().as_bytes());
-    hasher.field(normalize_message(&entry.message).as_bytes());
+    hasher.field(normalize_message(&crate::markup::plain(&entry.message)).as_bytes());
     if let Some(culprit) = entry.culprit() {
         hasher.field(culprit.path.as_bytes());
         hasher.field(&culprit.line.unwrap_or(0).to_le_bytes());
@@ -52,7 +52,7 @@ pub fn of_entry(entry: &LogEntry) -> u64 {
 pub fn across_runs(entry: &LogEntry) -> u64 {
     let mut hasher = Fnv1a::new();
     hasher.field(entry.category.label().as_bytes());
-    hasher.field(normalize_message(&entry.message).as_bytes());
+    hasher.field(normalize_message(&crate::markup::plain(&entry.message)).as_bytes());
     if let Some(culprit) = entry.culprit() {
         hasher.field(culprit.path.as_bytes());
     }

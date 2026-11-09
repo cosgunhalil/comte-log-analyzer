@@ -23,6 +23,8 @@ paste a short report into Jira or Slack.
   - Engine chatter (licensing, package manager, Mono) is hidden.
   - Repeated messages collapse into one row with a count (×95).
   - Stack traces show your code in bold and fold the engine frames.
+  - Unity rich text in your own logs (`<color=cyan>`, `<b>`, `<i>`) is shown
+    in color, as in Unity's console.
 - **Tells you what matters.** A one-line verdict ("Crashed in Scene #3",
   "103 errors (4 different)"), the most repeated problems, and the slowest
   operations (domain reloads, asset refreshes, compiles).

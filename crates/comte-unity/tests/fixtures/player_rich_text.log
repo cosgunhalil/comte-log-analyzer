@@ -1,0 +1,28 @@
+Mono path[0] = 'C:/Games/Sample Racer/SampleRacer_Data/Managed'
+Initialize engine version: 2022.3.20f1 (61c2feb0970d)
+UnloadTime: 2.104100 ms
+[10:15:10.634] <color='cyan'>Starting new race | Stage 01: Race 1 (Sprint)</color>
+(Filename: C:\build\output\unity\unity\Runtime/Export/Debug/Debug.bindings.h Line: 39)
+
+[10:15:11.002] <color=#7CFC00>Lap 1/3</color> best <b>01:12.408</b>
+(Filename: C:\build\output\unity\unity\Runtime/Export/Debug/Debug.bindings.h Line: 39)
+
+[10:15:12.250] <color=yellow>Low fuel</color> on car <i>Red Comet</i>
+(Filename: C:\build\output\unity\unity\Runtime/Export/Debug/Debug.bindings.h Line: 39)
+
+[10:15:12.900] <color=white><b>Checkpoint</b> 2</color> <size=10>(debug)</size>
+(Filename: C:\build\output\unity\unity\Runtime/Export/Debug/Debug.bindings.h Line: 39)
+
+[10:15:13.441] <color="#FF000080">Collision</color> with barrier at speed 212
+(Filename: C:\build\output\unity\unity\Runtime/Export/Debug/Debug.bindings.h Line: 39)
+
+[10:15:14.003] Parsed List<int> of 4 checkpoints, next is <null>
+(Filename: C:\build\output\unity\unity\Runtime/Export/Debug/Debug.bindings.h Line: 39)
+
+[10:15:15.120] <color='cyan'>Starting new race | Stage 01: Race 2 (Sprint)</color>
+(Filename: C:\build\output\unity\unity\Runtime/Export/Debug/Debug.bindings.h Line: 39)
+
+NullReferenceException: Object reference not set to an instance of an object
+  at SampleRacer.Race.Finish () [0x00010] in <6f1a2b3c4d5e6f708192a3b4c5d6e7f8>:0
+(Filename: <6f1a2b3c4d5e6f708192a3b4c5d6e7f8> Line: 0)
+

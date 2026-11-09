@@ -349,7 +349,9 @@ impl LogEntry {
     /// A short headline: the exception type for exceptions
     /// (`NullReferenceException`), otherwise the message cut to `max` chars.
     pub fn headline(&self, max: usize) -> String {
-        if let Some((name, _)) = self.message.split_once(": ") {
+        // Rich-text tags (`<color=cyan>`) are styling, not content.
+        let message = crate::markup::plain(&self.message);
+        if let Some((name, _)) = message.split_once(": ") {
             let short = name.rsplit('.').next().unwrap_or(name);
             // A specific type says what happened; a bare `Exception` doesn't,
             // so it keeps its message.
@@ -357,7 +359,7 @@ impl LogEntry {
                 return short.to_owned();
             }
         }
-        let message = self.message.trim();
+        let message = message.trim();
         if message.chars().count() <= max {
             message.to_owned()
         } else {

@@ -104,8 +104,10 @@ impl Filter {
 
 fn entry_contains(entry: &LogEntry, needle: &str) -> bool {
     let hit = |text: &str| text.to_lowercase().contains(needle);
-    hit(&entry.message)
-        || entry.details.iter().any(|d| hit(d))
+    // Search the words, not the rich-text tags around them.
+    let plain_hit = |text: &str| hit(&comte_core::markup::plain(text));
+    plain_hit(&entry.message)
+        || entry.details.iter().any(|d| plain_hit(d))
         || entry
             .stack
             .iter()

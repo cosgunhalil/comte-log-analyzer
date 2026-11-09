@@ -9,6 +9,7 @@
 //! - [`source`]: descriptions of log files on disk ([`LogSource`]).
 //! - [`reader`]: lossy, line-oriented file reading that feeds a parser.
 //! - [`fingerprint`]: stable hashes used to collapse duplicate entries.
+//! - [`markup`]: Unity rich text (`<color=…>`, `<b>`, `<i>`) to styled spans or plain text.
 //! - [`insights`]: verdict, most repeated problems, slowest operations.
 //! - [`compare`]: what changed between two logs (new/gone problems, timings).
 //! - [`session`]: the saved-session file format (header with note and tags).
@@ -23,6 +24,7 @@ pub mod document;
 pub mod engine;
 pub mod fingerprint;
 pub mod insights;
+pub mod markup;
 pub mod model;
 pub mod parser;
 pub mod reader;

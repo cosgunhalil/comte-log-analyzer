@@ -233,10 +233,17 @@ fn problem_details(out: &mut Out, doc: &LogDocument, entry: &LogEntry) {
     facts.push(format!("first at line {}", entry.line_range.start));
     out.para(&facts.join(" · "));
 
-    let mut block = vec![entry.message.clone()];
+    // Rich-text tags are styling; a report shows the words.
+    let mut block = vec![crate::markup::plain(&entry.message)];
     // A native crash's details are symbol-loader chatter with local paths.
     if entry.severity != Severity::Crash {
-        block.extend(entry.details.iter().take(6).cloned());
+        block.extend(
+            entry
+                .details
+                .iter()
+                .take(6)
+                .map(|d| crate::markup::plain(d)),
+        );
     }
     block.extend(trimmed_stack(entry));
     out.code_block(&block);

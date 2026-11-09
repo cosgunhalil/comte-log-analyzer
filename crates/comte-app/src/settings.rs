@@ -49,6 +49,8 @@ pub struct Settings {
     /// Turn on live tail whenever `Editor.log` is opened.
     pub follow_editor_log: bool,
     pub theme: ThemeChoice,
+    /// Show Unity rich text (`<color=cyan>`, `<b>`, `<i>`) styled instead of as tags.
+    pub render_rich_text: bool,
 }
 
 impl Default for Settings {
@@ -63,6 +65,7 @@ impl Default for Settings {
             show_noise: false,
             follow_editor_log: false,
             theme: ThemeChoice::System,
+            render_rich_text: true,
         }
     }
 }
@@ -112,6 +115,7 @@ mod tests {
             show_noise: true,
             follow_editor_log: true,
             theme: ThemeChoice::Dark,
+            render_rich_text: false,
         };
         let text = toml::to_string_pretty(&settings).unwrap();
         assert_eq!(toml::from_str::<Settings>(&text).unwrap(), settings);
@@ -121,6 +125,10 @@ mod tests {
         assert_eq!(partial.ide, IdeChoice::Rider);
         assert!(partial.collapse_duplicates, "default stays on");
         assert_eq!(partial.theme, ThemeChoice::System);
+        assert!(
+            partial.render_rich_text,
+            "rich text is on unless turned off"
+        );
         assert!(toml::from_str::<Settings>("ide = \"Emacs\"").is_err());
     }
 }

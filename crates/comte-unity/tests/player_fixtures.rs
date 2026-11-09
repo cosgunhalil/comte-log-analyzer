@@ -268,3 +268,30 @@ fn unity_support_detects_and_builds_parsers() {
     .unwrap();
     assert_eq!(doc.fact(&FactKey::EngineVersion), Some("2022.3.1f1"));
 }
+
+#[test]
+fn rich_text_messages_keep_their_tags_but_headlines_and_groups_use_the_words() {
+    let doc = fixture("player_rich_text.log");
+    let user_logs: Vec<&comte_core::LogEntry> = doc
+        .entries()
+        .iter()
+        .filter(|e| e.category == Category::UserLog)
+        .collect();
+    assert_eq!(user_logs.len(), 7);
+    // The model keeps the message as written; the UI styles it.
+    assert_eq!(
+        user_logs[0].message,
+        "[10:15:10.634] <color='cyan'>Starting new race | Stage 01: Race 1 (Sprint)</color>"
+    );
+    assert_eq!(
+        user_logs[0].headline(200),
+        "[10:15:10.634] Starting new race | Stage 01: Race 1 (Sprint)"
+    );
+    // "Race 1" and "Race 2" differ only in numbers: one group of two.
+    assert_eq!(user_logs[0].fingerprint, user_logs[6].fingerprint);
+    // Look-alike tags are text.
+    assert_eq!(
+        user_logs[5].headline(200),
+        "[10:15:14.003] Parsed List<int> of 4 checkpoints, next is <null>"
+    );
+}

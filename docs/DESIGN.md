@@ -226,6 +226,20 @@ Checked against 30 real Player logs (Unity 2019.4 to 6000.x builds): every file 
 - Clean the signature: `SpiritCabinet.Installers.GameInstaller:Report (SpiritCabinet.Text.Import.TextData)` becomes `GameInstaller.Report(TextData)`, with the full namespace in a tooltip.
 - The **culprit** is the first user frame. It appears on the entry row as `GameInstaller.cs:84`.
 
+### 4.4 Unity rich text in messages
+Games often style their own logs, e.g. `Debug.Log("<color='cyan'>Starting new race</color>")`. Unity's console shows that in color; the log file keeps the tags. Comte Logger renders it like the console does (`comte-core::markup`):
+
+- **Tags:**
+  - `<color=…>` accepts named colors (`cyan`, `red`, `lightblue`, …), `#RGB`, `#RGBA`, `#RRGGBB` and `#RRGGBBAA`, unquoted or in `'single'` or `"double"` quotes.
+  - `<i>` is italic. `<b>` uses the stronger text color, because egui's default fonts have no bold weight.
+  - `<size>`, `<material>` and other TextMeshPro tags are removed without changing the look.
+- **Look-alikes stay text:** only real rich-text tags count. `List<int>`, `<null>`, `<>c__DisplayClass`, a `</color>` with nothing to close, and `<color=notacolor>` stay as written. Unclosed tags style the rest of the message, as in Unity.
+- **The model keeps the message as written.** Styling happens when drawing (entry rows and the details panel); "Original log lines" shows the raw text.
+- **Contrast:** Unity's console is dark. On the light theme, colors with too little contrast (WCAG ratio below 3) are mixed toward the text color, so `cyan` becomes teal and `yellow` dark olive.
+- **Tags never get in the way:** search, fingerprints (so a colored and an uncolored message group together), headlines, reports and comparisons use the tag-free text.
+- **Setting:** "Show Unity rich text in color" (on by default) can be turned off to show the tags as written.
+- **Tests:** `tests/fixtures/player_rich_text.log` covers the forms above.
+
 ---
 
 ## 5. Insights panel

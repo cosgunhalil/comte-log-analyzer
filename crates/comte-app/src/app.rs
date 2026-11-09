@@ -38,7 +38,7 @@ use crate::save::{
     default_file_name, discover_sessions, visible_lines,
 };
 use crate::settings::{Settings, ThemeChoice};
-use crate::theme::{severity_color, severity_icon};
+use crate::theme::{message_job, severity_color, severity_icon};
 use crate::view::{
     Filter, Row, build_rows, culprit_label, default_collapsed, find_problem, row_of_entry,
     section_path,
@@ -1099,6 +1099,11 @@ impl ComteApp {
                         ui.radio_value(&mut settings.theme, theme, theme.label());
                     }
                 });
+                ui.checkbox(
+                    &mut settings.render_rich_text,
+                    "Show Unity rich text in color (<color=…>, <b>, <i>)",
+                )
+                .on_hover_text("Off: show the tags as they are written in the log");
 
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -1604,6 +1609,7 @@ impl ComteApp {
             .and_then(|id| current.doc.entry(id))
             .map(|e| (e.fingerprint, e.section_id));
 
+        let rich = self.settings.render_rich_text;
         scroll.show_rows(ui, row_height, self.rows.len(), |ui, range| {
             for row in &self.rows[range] {
                 let (rect, response) =
@@ -1633,7 +1639,18 @@ impl ComteApp {
                             || (repeats > 1
                                 && selected_fingerprint
                                     == Some((entry.fingerprint, entry.section_id)));
-                        paint_entry_row(ui, rect, &response, entry, depth, repeats, is_selected);
+                        paint_entry_row(
+                            ui,
+                            rect,
+                            &response,
+                            entry,
+                            RowLook {
+                                depth,
+                                repeats,
+                                selected: is_selected,
+                                rich,
+                            },
+                        );
                         if response.double_clicked() {
                             double_clicked = Some(id);
                         }
@@ -1682,6 +1699,7 @@ impl ComteApp {
         let mut back = false;
         let mut open: Option<comte_core::SourceRef> = None;
         let links = Links {
+            rich: self.settings.render_rich_text,
             roots: self.project_roots(),
             ide: self.ide_name(),
         };
@@ -1895,15 +1913,29 @@ fn paint_section_row(
     );
 }
 
+/// How an entry row is shown.
+struct RowLook {
+    depth: u16,
+    /// Duplicates collapsed into this row.
+    repeats: u32,
+    selected: bool,
+    /// Render Unity rich text (`<color=…>`).
+    rich: bool,
+}
+
 fn paint_entry_row(
     ui: &Ui,
     rect: egui::Rect,
     response: &egui::Response,
     entry: &LogEntry,
-    depth: u16,
-    repeats: u32,
-    selected: bool,
+    look: RowLook,
 ) {
+    let RowLook {
+        depth,
+        repeats,
+        selected,
+        rich,
+    } = look;
     let visuals = ui.visuals();
     let painter = ui.painter_at(rect);
     if selected {
@@ -1967,11 +1999,18 @@ fn paint_entry_row(
         egui::pos2(x + 22.0, rect.top()),
         egui::pos2(right.max(x + 60.0), rect.bottom()),
     );
-    painter.with_clip_rect(message_rect).text(
-        egui::pos2(message_rect.left(), y),
-        Align2::LEFT_CENTER,
+    // Unity rich text (`<color=cyan>…</color>`) is shown in color, tags hidden.
+    let galley = painter.layout_job(message_job(
         &entry.message,
         FontId::proportional(13.5),
+        text_color,
+        visuals,
+        rich,
+    ));
+    let top = y - galley.size().y / 2.0;
+    painter.with_clip_rect(message_rect).galley(
+        egui::pos2(message_rect.left(), top),
+        galley,
         text_color,
     );
 }
@@ -1981,6 +2020,8 @@ fn paint_entry_row(
 /// What details need to turn source locations into "open in IDE" links.
 struct Links {
     roots: Vec<PathBuf>,
+    /// Show Unity rich-text colors in messages.
+    rich: bool,
     /// "Rider", "VS Code", …
     ide: String,
 }
@@ -2021,7 +2062,15 @@ fn entry_details(
         ui.label(RichText::new(format!("· {}", entry.category)).weak());
     });
     ui.add_space(4.0);
-    ui.label(RichText::new(&entry.message).size(15.0).strong());
+    let mut message = message_job(
+        &entry.message,
+        FontId::proportional(15.0),
+        ui.visuals().strong_text_color(),
+        ui.visuals(),
+        links.rich,
+    );
+    message.wrap.max_width = ui.available_width();
+    ui.label(message);
     if let Some(culprit) = entry.culprit()
         && resolve_source(&culprit.path, &links.roots).is_some()
         && ui
