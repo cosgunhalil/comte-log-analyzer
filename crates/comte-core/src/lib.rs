@@ -10,12 +10,14 @@
 //! - [`reader`]: lossy, line-oriented file reading that feeds a parser.
 //! - [`fingerprint`]: stable hashes used to collapse duplicate entries.
 //! - [`insights`]: verdict, most repeated problems, slowest operations.
+//! - [`compare`]: what changed between two logs (new/gone problems, timings).
 //! - [`session`]: the saved-session file format (header with note and tags).
 //! - [`redact`]: masks user names, tokens, ids, … before saving or sharing.
 //! - [`tail`]: incremental parsing for live tail ([`TailDocument`]).
 //!
 //! Line numbers are **1-based** everywhere; line ranges are half-open (`start..end`).
 
+pub mod compare;
 pub mod document;
 pub mod engine;
 pub mod fingerprint;
@@ -28,6 +30,7 @@ pub mod session;
 pub mod source;
 pub mod tail;
 
+pub use compare::{Comparison, FactDiff, ProblemDiff, TimingDiff};
 pub use document::LogDocument;
 pub use engine::{DETECT_LINES, EngineSupport, LogLocator, detect_engine};
 pub use insights::{Insights, Repeated, Timed, TimingTotal, Verdict, VerdictKind};

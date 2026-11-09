@@ -46,6 +46,19 @@ pub fn of_entry(entry: &LogEntry) -> u64 {
     hasher.0
 }
 
+/// Like [`of_entry`] but ignoring the culprit's line number. Used to match
+/// entries across two logs: editing a script between runs moves an error to
+/// another line, and it should still count as the same problem.
+pub fn across_runs(entry: &LogEntry) -> u64 {
+    let mut hasher = Fnv1a::new();
+    hasher.field(entry.category.label().as_bytes());
+    hasher.field(normalize_message(&entry.message).as_bytes());
+    if let Some(culprit) = entry.culprit() {
+        hasher.field(culprit.path.as_bytes());
+    }
+    hasher.0
+}
+
 /// Replaces volatile tokens with `#` and collapses whitespace:
 ///
 /// - plain numbers: `42` → `#`

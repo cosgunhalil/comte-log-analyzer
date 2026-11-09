@@ -22,6 +22,7 @@ use eframe::egui::{
 };
 
 use crate::cli::{age, human_size};
+use crate::compare_view::{CompareAction, CompareView, compare_ui, previous_run};
 use crate::devtools::DevHooks;
 use crate::engines::discover_sources;
 use crate::ide::{
@@ -68,6 +69,8 @@ pub struct ComteApp {
     /// Following the current file as it grows.
     live: Option<LiveTail>,
     settings: Settings,
+    /// The comparison report, when comparing the open log (B) with another (A).
+    compare: Option<CompareView>,
     /// Editors found on this machine; detected on first use.
     ides: Option<Vec<DetectedIde>>,
     /// Lines added by the last live update, and when.
@@ -118,6 +121,7 @@ impl ComteApp {
             live: None,
             live_activity: None,
             settings: Settings::load(),
+            compare: None,
             ides: None,
             dev,
         };
@@ -224,6 +228,9 @@ impl ComteApp {
         }
         self.current = Some(loaded);
         self.rows_dirty = true;
+        if let Some(compare) = &mut self.compare {
+            compare.invalidate();
+        }
     }
 
     fn open_dialog(&mut self, ctx: &egui::Context) {
@@ -476,6 +483,9 @@ impl ComteApp {
                 self.selected = None;
                 self.rows_dirty = true;
                 self.load_error = None;
+                if let Some(compare) = &mut self.compare {
+                    compare.invalidate();
+                }
                 if self.dev.select_problem {
                     self.rebuild_rows();
                     self.jump_to_problem(true);
@@ -491,6 +501,9 @@ impl ComteApp {
                 }
                 if self.dev.open_selected {
                     self.open_selected();
+                }
+                if self.dev.compare && self.compare.is_none() {
+                    self.start_compare(ctx);
                 }
                 if self.dev.live && self.live.is_none() {
                     self.start_live(ctx);
@@ -556,6 +569,77 @@ impl ComteApp {
         }
         self.rows_dirty = true;
         self.scroll_to_section = Some(id);
+    }
+
+    // -- compare ---------------------------------------------------------------
+
+    /// Compares the open log (B) with the previous run, or a file the user picks.
+    fn start_compare(&mut self, ctx: &egui::Context) {
+        let Some(current) = &self.current else {
+            return;
+        };
+        let a = previous_run(&current.path).or_else(|| {
+            rfd::FileDialog::new()
+                .set_title("Compare with… (log A, before)")
+                .add_filter("Log files", &["log", "txt"])
+                .pick_file()
+        });
+        if let Some(path) = a {
+            let title = file_title(&path);
+            self.compare = Some(CompareView::start(path, title, ctx));
+        }
+    }
+
+    fn on_compare_action(&mut self, action: CompareAction, ctx: &egui::Context) {
+        match action {
+            CompareAction::ShowInB(id) => {
+                self.compare = None;
+                self.reveal(id);
+            }
+            CompareAction::ShowInA(id) => {
+                if let Some(a) = self.compare.take().and_then(|c| c.a) {
+                    self.show_loaded(a, ctx);
+                    self.reveal(id);
+                }
+            }
+            CompareAction::PickA { path, title } => {
+                if let Some(compare) = &mut self.compare {
+                    compare.pick(path, title, ctx);
+                }
+            }
+            CompareAction::BrowseA => {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Compare with… (log A, before)")
+                    .add_filter("Log files", &["log", "txt"])
+                    .pick_file()
+                    && let Some(compare) = &mut self.compare
+                {
+                    let title = file_title(&path);
+                    compare.pick(path, title, ctx);
+                }
+            }
+            CompareAction::Swap => {
+                let a = self.compare.take().and_then(|c| c.a);
+                if let (Some(a), Some(b)) = (a, self.current.take()) {
+                    self.show_loaded(a, ctx);
+                    self.compare = Some(CompareView::with_loaded(b));
+                }
+            }
+            CompareAction::Close => self.compare = None,
+        }
+    }
+
+    /// Shows an already loaded log (from a comparison) in the viewer.
+    fn show_loaded(&mut self, loaded: Box<Loaded>, ctx: &egui::Context) {
+        self.stop_live();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+            "Comte Logger — {}",
+            loaded.title
+        )));
+        self.collapsed = default_collapsed(&loaded.doc);
+        self.current = Some(loaded);
+        self.selected = None;
+        self.rows_dirty = true;
     }
 
     // -- open in IDE -----------------------------------------------------------
@@ -809,7 +893,11 @@ impl ComteApp {
             self.jump_to_problem(false);
         }
         if escape && !typing {
-            self.select(None);
+            if self.compare.is_some() {
+                self.compare = None;
+            } else {
+                self.select(None);
+            }
         }
         if !typing {
             if down {
@@ -864,6 +952,20 @@ impl ComteApp {
                 .clicked()
             {
                 self.open_save_dialog();
+            }
+            if ui
+                .add_enabled(
+                    can_reload,
+                    egui::Button::selectable(self.compare.is_some(), "⇄ Compare…"),
+                )
+                .on_hover_text("Compare this log with the previous run or another log")
+                .clicked()
+            {
+                if self.compare.is_some() {
+                    self.compare = None;
+                } else {
+                    self.start_compare(ui.ctx());
+                }
             }
             let live = self.live.is_some();
             let live_text = if live {
@@ -1364,14 +1466,28 @@ impl eframe::App for ComteApp {
                 ui.set_min_width(ui.available_width());
                 self.details_panel(ui);
             });
-        egui::CentralPanel::default_margins().show(ui, |ui| {
-            self.filter_bar(ui);
-            ui.separator();
-            if self.rows_dirty || self.filter != filter_before {
-                self.rebuild_rows();
+        let mut compare_action = None;
+        if let (Some(compare), Some(current)) = (&mut self.compare, &self.current) {
+            compare.update(current);
+            egui::CentralPanel::default_margins().show(ui, |ui| {
+                compare_action = compare_ui(ui, compare, current, &self.sources, &self.sessions);
+            });
+            if compare.loading() || compare.result.is_none() {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
             }
-            self.entry_list(ui);
-        });
+        } else {
+            egui::CentralPanel::default_margins().show(ui, |ui| {
+                self.filter_bar(ui);
+                ui.separator();
+                if self.rows_dirty || self.filter != filter_before {
+                    self.rebuild_rows();
+                }
+                self.entry_list(ui);
+            });
+        }
+        if let Some(action) = compare_action {
+            self.on_compare_action(action, &ctx);
+        }
 
         if self.filter != filter_before || self.rows_dirty {
             self.rebuild_rows();

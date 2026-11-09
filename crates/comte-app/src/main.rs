@@ -7,6 +7,7 @@
 
 mod app;
 mod cli;
+mod compare_view;
 mod devtools;
 mod engines;
 mod ide;
@@ -27,7 +28,8 @@ const USAGE: &str = "Usage:
   comte-logger                      open the desktop app
   comte-logger <log file>           open the desktop app with this file
   comte-logger --list               list logs found on this machine
-  comte-logger --summary <log file> print a parse summary";
+  comte-logger --summary <log file> print a parse summary
+  comte-logger --compare <A> <B>    print what changed from log A to log B";
 
 fn main() -> ExitCode {
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
@@ -39,6 +41,19 @@ fn main() -> ExitCode {
         Some("--list") => {
             cli::list_sources();
             ExitCode::SUCCESS
+        }
+        Some("--compare") => {
+            let (Some(a), Some(b)) = (args.get(1), args.get(2)) else {
+                eprintln!("{USAGE}");
+                return ExitCode::FAILURE;
+            };
+            match cli::compare(std::path::Path::new(a), std::path::Path::new(b)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    ExitCode::FAILURE
+                }
+            }
         }
         Some("--summary") => {
             let Some(path) = args.get(1) else {

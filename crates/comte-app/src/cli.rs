@@ -125,3 +125,73 @@ pub fn summarize(path: &Path) -> std::io::Result<()> {
     }
     Ok(())
 }
+
+/// Prints what changed from log `a` to log `b`.
+pub fn compare(a: &Path, b: &Path) -> std::io::Result<()> {
+    let la = load(a, &a.display().to_string())?;
+    let lb = load(b, &b.display().to_string())?;
+    let c = comte_core::Comparison::of(&la.doc, &lb.doc);
+    println!("A: {}", a.display());
+    println!("B: {}", b.display());
+    println!(
+        "errors {} -> {}, warnings {} -> {}",
+        c.counts_a.errors(),
+        c.counts_b.errors(),
+        c.counts_a.warning,
+        c.counts_b.warning
+    );
+    let row = |d: &comte_core::ProblemDiff| {
+        format!(
+            "x{} -> x{}  {}{}",
+            d.count_a,
+            d.count_b,
+            d.headline,
+            d.location
+                .as_ref()
+                .map(|l| format!(" @ {l}"))
+                .unwrap_or_default()
+        )
+    };
+    for (title, list) in [
+        ("new in B", &c.new),
+        ("gone since A", &c.gone),
+        ("in both", &c.common),
+    ] {
+        println!("{title} ({}):", list.len());
+        for d in list {
+            println!("  {}", row(d));
+        }
+    }
+    println!("timings (average A -> B):");
+    for t in &c.timings {
+        let avg = |x: &Option<comte_core::TimingTotal>| {
+            x.as_ref()
+                .map_or("-".to_owned(), |t| format_duration(t.average()))
+        };
+        let flag = if t.is_regression() {
+            "  SLOWER"
+        } else if t.is_improvement() {
+            "  faster"
+        } else {
+            ""
+        };
+        println!(
+            "  {}: {} -> {}{}{flag}",
+            t.kind.label(),
+            avg(&t.a),
+            avg(&t.b),
+            t.change_percent()
+                .map(|p| format!(" ({})", comte_core::compare::format_percent(p)))
+                .unwrap_or_default()
+        );
+    }
+    for f in &c.facts {
+        println!(
+            "changed {}: {} -> {}",
+            f.key.label(),
+            f.a.as_deref().unwrap_or("-"),
+            f.b.as_deref().unwrap_or("-")
+        );
+    }
+    Ok(())
+}

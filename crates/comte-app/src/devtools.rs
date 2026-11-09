@@ -11,6 +11,7 @@
 //!   `COMTE_SAVE_NOTE`, `COMTE_SAVE_TAGS` and `COMTE_SAVE_EXTRA` ("Also redact") prefilled.
 //! - `COMTE_SAVE_TO=file.log`: save the session there right away (no file dialog).
 //! - `COMTE_LIVE=1`: turn live tail on once the log is loaded.
+//! - `COMTE_COMPARE=1`: open the comparison with the previous run after loading.
 //! - `COMTE_IDE_DRY_RUN=1`: print the editor command instead of starting it;
 //!   `COMTE_OPEN=1` opens the selected entry's location after loading.
 //! - `COMTE_SCREENSHOT_DELAY_MS=4000`: wait this long after loading before the screenshot.
@@ -37,6 +38,7 @@ pub struct DevHooks {
     pub save_extra: Option<String>,
     pub save_to: Option<PathBuf>,
     pub live: bool,
+    pub compare: bool,
     pub ide_dry_run: bool,
     pub open_selected: bool,
     screenshot_delay: std::time::Duration,
@@ -59,6 +61,7 @@ impl DevHooks {
             save_extra: var("COMTE_SAVE_EXTRA"),
             save_to: var("COMTE_SAVE_TO").map(PathBuf::from),
             live: var("COMTE_LIVE").as_deref() == Some("1"),
+            compare: var("COMTE_COMPARE").as_deref() == Some("1"),
             ide_dry_run: var("COMTE_IDE_DRY_RUN").as_deref() == Some("1"),
             open_selected: var("COMTE_OPEN").as_deref() == Some("1"),
             screenshot_delay: std::time::Duration::from_millis(

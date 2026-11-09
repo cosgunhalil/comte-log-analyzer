@@ -318,10 +318,19 @@ A short report to paste into Jira or Slack: verdict, info card, the note and tag
 
 ## 7. Compare two logs
 
-Choose **A** and **B** (by default `Editor-prev.log` vs `Editor.log`). The comparison shows:
-- **New**, **gone** and **common** errors and warnings, matched by fingerprint, with counts.
-- Changes in timings, for example: "domain reload average 1.3 s → 2.5 s (+92%)".
-- Changes in facts (Unity version, GPU, driver).
+**B** is the open log; **A** ("before") defaults to the previous run (`Editor.log` → `Editor-prev.log`, `Player.log` → `Player-prev.log`), otherwise a file you pick. Implemented as `comte-core::compare::Comparison::of(a, b)`.
+
+- **Matching:** warnings or worse are matched with `fingerprint::across_runs`: same category, same message with numbers and IDs ignored, same file, *any line*. Editing a script between runs moves an error to another line, and it still counts as the same problem. The test case: "Save failed" moving from line 77 to 81 stays "in both".
+- **Lists:**
+  - **New in B:** worst and most frequent first. Click to show it in B.
+  - **Gone since A:** click to open A at that entry.
+  - **In both:** counts as ×A → ×B, growing ones first; a count that grew is shown in red.
+- **Summary chips:** errors and warnings, A → B, with the difference.
+- **Timings:** average per kind, A vs B, with the change in %. Red means a **regression**: more than 25 % *and* more than 100 ms slower. Green means the same amount faster. Smaller moves are treated as noise.
+- **Environment changes:** facts whose values differ (Unity version, GPU driver, project, …). The start date is skipped because it always differs.
+- **In the app:** the ⇄ Compare button replaces the list with the report. A can be picked from the found logs, saved sessions, or Browse. Swap reverses the direction; Close or Esc goes back. The report recomputes when B changes, including live updates.
+- **CLI:** `comte-logger --compare <A> <B>` prints the same report.
+- **On this machine:** `Editor-prev.log` → `Editor.log` shows a MissingReferenceException fixed in `SpreadView.cs:75`, a new one in `TurnView.cs:98`, and a script recompile mid-session that made compile, reload and refresh times slower.
 
 ---
 
@@ -427,7 +436,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 | M7 | Live tail | New Unity output appears in under 1 s; truncation handled ✅ |
 | M8 | Insights panel | Verdict, counts, slowest items, top repeated messages ✅ |
 | M9 | Open in IDE | Clicking a frame opens Rider or VS Code at the line ✅ |
-| M10 | Compare two logs | Editor-prev vs Editor diff view |
+| M10 | Compare two logs | Editor-prev vs Editor diff view ✅ |
 | M11 | Markdown report export | Report pastes cleanly into Jira or Slack |
 | M12 | Polish: settings UI, icon, release build | `cargo build --release` gives a working `.exe` |
 
@@ -443,7 +452,6 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 - **M12 console window:** the binary still uses the console subsystem, so `--list` and `--summary` can print. Launched from Explorer, a console window opens behind the GUI. Fix this in M12, for example with a separate CLI binary or by attaching to the parent console.
 - **M12 settings:** `settings.toml` exists since M9 (IDE choice, custom command, project folder). Add the "Also redact" words, a custom sessions folder and the filter defaults to it, and turn the ⚙ menu into a settings window.
 - **M5 culprit for release builds:** Player frames usually have no file path, so `culprit()` finds no location. The UI should fall back to showing the first user frame's name (for example `Gun.StopShooting()`).
-- **M10 compare:** reuse `Insights` for both logs; the comparison is mostly the difference of their repeated groups (by fingerprint) and timing totals.
 - **M11 Markdown export:** the report is mostly a rendering of `Insights` plus the session note and tags.
 - **Compile metric:** this comes from Tundra's own duration. It can differ from the separate `AssetDatabase: script compilation time` line, which Unity sometimes prints before the compile starts.
 

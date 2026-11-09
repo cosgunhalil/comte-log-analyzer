@@ -414,7 +414,10 @@ mod tests {
             resolve_source(&script.display().to_string(), &[]),
             Some(script.clone())
         );
-        assert_eq!(resolve_source("Assets/Scripts/B.cs", std::slice::from_ref(&root)), None);
+        assert_eq!(
+            resolve_source("Assets/Scripts/B.cs", std::slice::from_ref(&root)),
+            None
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
