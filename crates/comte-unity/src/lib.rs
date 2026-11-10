@@ -22,6 +22,7 @@ macro_rules! regex {
 }
 
 mod common;
+pub mod companions;
 pub mod detect;
 pub mod frames;
 pub mod hints;
@@ -53,6 +54,20 @@ impl EngineSupport for UnitySupport {
 
     fn new_parser(&self, kind: LogKind) -> Box<dyn LogParser> {
         parser_for(kind)
+    }
+
+    fn companions(
+        &self,
+        log: &std::path::Path,
+        kind: LogKind,
+        doc: &comte_core::LogDocument,
+    ) -> Vec<comte_core::Companion> {
+        companions::find_companions(
+            log,
+            kind,
+            doc,
+            &companions::CompanionRoots::for_this_machine(),
+        )
     }
 }
 

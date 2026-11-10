@@ -6,8 +6,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use comte_core::{
-    BuildReport, Hint, Insights, Repeated, SessionContent, SessionHeader, Severity, VerdictKind,
-    format_bytes, format_duration,
+    BuildReport, Companion, Hint, Insights, Repeated, SessionContent, SessionHeader, Severity,
+    VerdictKind, format_bytes, format_duration,
 };
 use eframe::egui::{self, Color32, RichText, Sense, Ui, vec2};
 
@@ -23,6 +23,8 @@ pub enum Jump {
     CopySummary,
     /// Open the folder or file of the hint with this index (`doc.hints()`).
     OpenHintPath(usize),
+    /// Open the companion log or folder with this index (`Loaded::companions`).
+    OpenCompanion(usize),
 }
 
 /// What the user did with a hint card.
@@ -30,11 +32,37 @@ pub enum Jump {
 pub struct HintAction {
     pub show: bool,
     pub open: bool,
+    /// A companion clicked: its index in the list given to the card.
+    pub companion: Option<usize>,
+}
+
+/// Buttons for the companions about `topic`. Returns the index clicked.
+pub fn companion_buttons(ui: &mut Ui, companions: &[Companion], topic: &str) -> Option<usize> {
+    let mut clicked = None;
+    for (i, companion) in companions.iter().enumerate() {
+        if companion.topic != topic {
+            continue;
+        }
+        let icon = if companion.is_folder { "📂" } else { "📄" };
+        if ui
+            .small_button(format!("{icon} {}", companion.label))
+            .on_hover_text(format!("{}\n{}", companion.about, companion.path.display()))
+            .clicked()
+        {
+            clicked = Some(i);
+        }
+    }
+    clicked
 }
 
 /// A known problem: title, advice, and buttons to see the entry or open its
 /// folder. `show_button` is off inside the entry's own details.
-pub fn hint_card(ui: &mut Ui, hint: &Hint, show_button: bool) -> HintAction {
+pub fn hint_card(
+    ui: &mut Ui,
+    hint: &Hint,
+    show_button: bool,
+    companions: &[Companion],
+) -> HintAction {
     let mut action = HintAction::default();
     let accent = Color32::from_rgb(0x3d, 0x8b, 0xfd);
     egui::Frame::new()
@@ -58,6 +86,7 @@ pub fn hint_card(ui: &mut Ui, hint: &Hint, show_button: bool) -> HintAction {
                 if show_button && ui.small_button("Show it →").clicked() {
                     action.show = true;
                 }
+                action.companion = companion_buttons(ui, companions, &hint.topic);
                 if let Some(path) = &hint.path {
                     if std::path::Path::new(path).exists() {
                         if ui
@@ -101,12 +130,15 @@ pub fn overview(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
     }
 
     let insights = &current.insights;
-    jump = jump.or(verdict_banner(ui, insights, quiet_for(current)));
+    jump = jump.or(verdict_banner(ui, current, quiet_for(current)));
 
     if !current.doc.hints().is_empty() {
         heading(ui, "What this might be");
         for (i, hint) in current.doc.hints().iter().enumerate() {
-            let action = hint_card(ui, hint, true);
+            let action = hint_card(ui, hint, true, &current.companions);
+            if let Some(c) = action.companion {
+                jump = Some(Jump::OpenCompanion(c));
+            }
             if action.show
                 && let Some(entry) = current.doc.entry_at_line(hint.line)
             {
@@ -168,6 +200,23 @@ pub fn overview(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
             .show(ui, |ui| {
                 jump = jump.or(repeated_list(ui, &insights.repeated_messages));
             });
+    }
+
+    if !current.companions.is_empty() {
+        heading(ui, "Related logs");
+        for (i, companion) in current.companions.iter().enumerate() {
+            ui.horizontal(|ui| {
+                let icon = if companion.is_folder { "📂" } else { "📄" };
+                if ui
+                    .add(egui::Button::new(format!("{icon} {}", companion.label)).frame(false))
+                    .on_hover_text(companion.path.display().to_string())
+                    .clicked()
+                {
+                    jump = Some(Jump::OpenCompanion(i));
+                }
+                ui.label(RichText::new(&companion.about).weak().small());
+            });
+        }
     }
 
     let facts = current.doc.facts();
@@ -298,8 +347,8 @@ fn huge_log_notice(ui: &mut Ui, current: &Loaded, cut: crate::loader::Truncated)
     ui.add_space(8.0);
 }
 
-fn verdict_banner(ui: &mut Ui, insights: &Insights, quiet: Option<Duration>) -> Option<Jump> {
-    let verdict = &insights.verdict;
+fn verdict_banner(ui: &mut Ui, current: &Loaded, quiet: Option<Duration>) -> Option<Jump> {
+    let verdict = &current.insights.verdict;
     let visuals = ui.visuals().clone();
     let (icon, color) = match verdict.kind {
         VerdictKind::Crashed => ("💥", severity_color(&visuals, Severity::Crash)),
@@ -346,12 +395,20 @@ fn verdict_banner(ui: &mut Ui, insights: &Insights, quiet: Option<Duration>) -> 
                 };
                 ui.label(RichText::new(text).strong());
             }
-            if let Some(id) = verdict.entry {
-                ui.add_space(4.0);
-                if ui.button("Show it →").clicked() {
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                if let Some(id) = verdict.entry
+                    && ui.button("Show it →").clicked()
+                {
                     jump = Some(Jump::Entry(id));
                 }
-            }
+                // A stuck import: the workers' own logs say more.
+                if verdict.kind == VerdictKind::Stopped
+                    && let Some(c) = companion_buttons(ui, &current.companions, "import")
+                {
+                    jump = Some(Jump::OpenCompanion(c));
+                }
+            });
         });
     jump
 }

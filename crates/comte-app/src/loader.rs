@@ -8,8 +8,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use comte_core::{
-    DETECT_LINES, EngineId, Fact, Insights, LogDocument, LogKind, LogParser, PlainTextParser,
-    SessionHeader, detect_engine, parse_header, parse_kind_token, parse_reader,
+    Companion, DETECT_LINES, EngineId, Fact, Insights, LogDocument, LogKind, LogParser,
+    PlainTextParser, SessionHeader, detect_engine, parse_header, parse_kind_token, parse_reader,
 };
 
 const MB: u64 = 1024 * 1024;
@@ -104,6 +104,25 @@ pub struct Loaded {
     /// Set when only the end of a huge log was read; line numbers then count
     /// from the first line read.
     pub truncated: Option<Truncated>,
+    /// Related logs and folders on this machine (`upm.log`, worker logs, …).
+    pub companions: Vec<Companion>,
+}
+
+/// Companion logs of a log (none for saved sessions: they were made elsewhere).
+pub fn companions_for(
+    path: &Path,
+    kind: Option<(EngineId, LogKind)>,
+    doc: &LogDocument,
+    session: bool,
+) -> Vec<Companion> {
+    let Some((id, kind)) = kind.filter(|_| !session) else {
+        return Vec::new();
+    };
+    engines()
+        .iter()
+        .find(|e| e.id() == id)
+        .map(|e| e.companions(path, kind, doc))
+        .unwrap_or_default()
 }
 
 impl Loaded {
@@ -186,6 +205,7 @@ fn load_huge(path: &Path, title: &str, len: u64, tail: u64) -> io::Result<Loaded
         .collect();
     let index = DocIndex::new(&doc);
     let insights = Insights::of(&doc);
+    let companions = companions_for(path, kind, &doc, false);
     Ok(Loaded {
         path: path.to_owned(),
         title: title.to_owned(),
@@ -198,6 +218,7 @@ fn load_huge(path: &Path, title: &str, len: u64, tail: u64) -> io::Result<Loaded
         raw,
         elapsed: started.elapsed(),
         truncated: Some(parts.truncated),
+        companions,
     })
 }
 
@@ -246,6 +267,7 @@ fn load_whole(path: &Path, title: &str) -> io::Result<Loaded> {
     } else {
         kind_label
     };
+    let companions = companions_for(path, kind, &doc, session.is_some());
     Ok(Loaded {
         path: path.to_owned(),
         title: title.to_owned(),
@@ -255,6 +277,7 @@ fn load_whole(path: &Path, title: &str) -> io::Result<Loaded> {
         doc,
         index,
         insights,
+        companions,
         raw,
         elapsed: started.elapsed(),
         truncated: None,

@@ -22,7 +22,8 @@ use comte_core::{DETECT_LINES, Insights, TailDocument};
 use eframe::egui;
 
 use crate::loader::{
-    HUGE_LOG, HUGE_TAIL, Loaded, Picked, Truncated, head_facts, head_lines, pick_parser, read_huge,
+    HUGE_LOG, HUGE_TAIL, Loaded, Picked, Truncated, companions_for, head_facts, head_lines,
+    pick_parser, read_huge,
 };
 use crate::view::DocIndex;
 
@@ -212,6 +213,7 @@ impl TailState {
     fn to_loaded(&self, path: &Path, title: &str) -> Loaded {
         let doc = self.tail.snapshot();
         let index = DocIndex::new(&doc);
+        let companions = companions_for(path, self.kind, &doc, false);
         Loaded {
             path: path.to_owned(),
             title: title.to_owned(),
@@ -224,6 +226,7 @@ impl TailState {
             raw: self.tail.lines().to_vec(),
             elapsed: self.parse_time,
             truncated: self.truncated,
+            companions,
         }
     }
 }

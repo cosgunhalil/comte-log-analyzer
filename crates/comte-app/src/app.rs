@@ -1107,6 +1107,23 @@ impl ComteApp {
     }
 
     /// Opens a source location from the log in the chosen editor.
+    /// Opens a companion: a log in Comte Logger, a folder in the file manager.
+    fn open_companion(&mut self, index: usize, ctx: &egui::Context) {
+        let Some(companion) = self
+            .current
+            .as_ref()
+            .and_then(|c| c.companions.get(index))
+            .cloned()
+        else {
+            return;
+        };
+        if companion.is_folder {
+            self.open_path(&companion.path.to_string_lossy());
+        } else {
+            self.open(companion.path, companion.label, ctx);
+        }
+    }
+
     /// Opens a folder (or file) in the system's file manager.
     fn open_path(&mut self, path: &str) {
         let native = path.replace('/', std::path::MAIN_SEPARATOR_STR);
@@ -2291,6 +2308,7 @@ impl ComteApp {
         let mut back = false;
         let mut open: Option<comte_core::SourceRef> = None;
         let mut open_path: Option<String> = None;
+        let mut companion: Option<usize> = None;
         let mut copy: Option<(u64, CopyWhat)> = None;
         let mut toggle_pin: Option<u64> = None;
         let mut new_note: Option<(usize, String)> = None;
@@ -2331,6 +2349,7 @@ impl ComteApp {
                             entry_details(ui, current, entry, repeats, note.as_mut(), &links);
                         open = outcome.open;
                         open_path = outcome.open_path;
+                        companion = outcome.companion;
                         copy = outcome.copy.map(|what| (entry.id, what));
                         if outcome.toggle_pin {
                             toggle_pin = Some(entry.id);
@@ -2353,6 +2372,9 @@ impl ComteApp {
         if let Some(path) = open_path {
             self.open_path(&path);
         }
+        if let Some(i) = companion {
+            self.open_companion(i, ui.ctx());
+        }
         if let Some((id, what)) = copy {
             self.copy_entry(ui.ctx(), id, what);
         }
@@ -2368,6 +2390,7 @@ impl ComteApp {
             Some(Jump::Entry(id)) => self.reveal(id),
             Some(Jump::Section(id)) => self.reveal_section(id),
             Some(Jump::CopySummary) => self.copy_summary(ui.ctx()),
+            Some(Jump::OpenCompanion(i)) => self.open_companion(i, ui.ctx()),
             Some(Jump::OpenHintPath(i)) => {
                 let path = self
                     .current
@@ -2715,6 +2738,8 @@ struct DetailsOutcome {
     open: Option<comte_core::SourceRef>,
     /// A hint's folder to open.
     open_path: Option<String>,
+    /// A companion log to open (index in `Loaded::companions`).
+    companion: Option<usize>,
     copy: Option<CopyWhat>,
     toggle_pin: bool,
 }
@@ -2788,11 +2813,14 @@ fn entry_details(
     ui.label(highlight(message, &ranges, highlight_color(ui.visuals())));
     // What this entry most likely is (crash triage, known problems).
     let mut open_path = None;
+    let mut companion = None;
     for hint in current.doc.hints_for(entry) {
         ui.add_space(4.0);
-        if hint_card(ui, hint, false).open {
+        let action = hint_card(ui, hint, false, &current.companions);
+        if action.open {
             open_path.clone_from(&hint.path);
         }
+        companion = companion.or(action.companion);
     }
     ui.horizontal_wrapped(|ui| {
         if let Some(culprit) = entry.culprit()
@@ -2907,6 +2935,7 @@ fn entry_details(
     DetailsOutcome {
         open,
         open_path,
+        companion,
         copy,
         toggle_pin,
     }

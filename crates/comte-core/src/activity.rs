@@ -44,8 +44,11 @@ pub struct Hint {
     pub advice: Vec<String>,
     /// Line of the entry it is about.
     pub line: usize,
-    /// A file or folder that helps (a crash report folder, a companion log).
+    /// A file or folder that helps (a crash report folder).
     pub path: Option<String>,
+    /// What it is about ("upm", "gradle", "licensing", "crash", …), so the
+    /// app can offer the matching companion logs.
+    pub topic: String,
 }
 
 /// One row of a size table: a category ("Textures") or an asset path.

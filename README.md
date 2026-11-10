@@ -44,6 +44,11 @@ paste a short report into Jira or Slack.
   - also covered: a removed graphics device (with a note when an integrated
     GPU was used), a full disk, Package Manager, Gradle, IL2CPP and licensing
     failures
+- **Points to the other logs.** Package Manager's `upm.log`, the import
+  workers' logs, Gradle's build folder, the licensing client's log and
+  Editor crash reports are found when they exist. They are offered right
+  where they help, such as `upm.log` on a package error, or the worker logs
+  on a stuck import.
 - **Says where Unity got stuck.** When the log ends in the middle of
   something, the verdict says what: "⏳ Stopped while importing
   Assets/Hero.fbx", a domain reload or a script compile. It also says how long

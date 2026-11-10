@@ -43,6 +43,19 @@ Comte Logger is a Windows desktop log analyzer for game engines, written in Rust
 - **File-kind detection** (`comte_core::detect_engine` + `EngineSupport::detect`): read the first 64 lines and ask each engine in turn. A file no engine recognizes opens with the plain-text parser. File names are never trusted, because testers rename files.
 - macOS and Linux roots are wired up in the locator but untested (see §13).
 - Logs that players and QA send usually arrive as loose files, so drag and drop is a first-class way to open one.
+- **Companion logs** (`EngineSupport::companions`, Unity's in `comte_unity::companions`): files and folders on this machine with more detail. They are found when a log loads (and on live updates), and only ones that exist are kept. Saved sessions get none, because they were made elsewhere. Editor logs only:
+
+  | Companion | Where | Topic |
+  |---|---|---|
+  | `upm.log` | next to the log (a project's `Logs/`), plus the global one, labelled "(global)" when both exist | `upm` |
+  | `AssetImportWorkerN.log` (up to 8) | the project's `Logs/` (project from the `Successfully changed project path` fact) | `import` |
+  | Gradle build folder | `Temp/gradleOut`, or Bee's `Library/Bee/Android/Prj/{IL2CPP,Mono2x}/Gradle` | `gradle` |
+  | `Unity.Licensing.Client.log` | `%LOCALAPPDATA%\Unity\` (`~/Library/Logs/Unity/` on macOS) | `licensing` |
+  | Editor crash reports | `%TEMP%\Unity\Editor\Crashes` | `crash` |
+
+  - Each `Hint` has a topic: the rule id, or `crash` / `licensing`. A hint card offers the companions of its topic (📄 opens a log in Comte Logger, 📂 opens a folder).
+  - A stuck-import verdict offers the worker logs.
+  - The overview lists them all under **Related logs**.
 
 ---
 

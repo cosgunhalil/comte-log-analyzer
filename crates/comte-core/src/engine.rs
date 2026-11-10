@@ -1,7 +1,24 @@
 //! Traits each engine crate (`comte-unity`, later `comte-unreal`, ...) implements.
 
+use std::path::{Path, PathBuf};
+
+use crate::document::LogDocument;
 use crate::parser::LogParser;
 use crate::source::{EngineId, LogKind, LogSource};
+
+/// A file or folder next to a log with more detail: another tool's own log
+/// (`upm.log`), worker logs, a build folder, a crash folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Companion {
+    /// "upm.log", "AssetImportWorker0.log", "Gradle build folder"
+    pub label: String,
+    /// What it holds, in a few words.
+    pub about: String,
+    pub path: PathBuf,
+    pub is_folder: bool,
+    /// Which hints it helps with (matches [`crate::Hint::topic`]).
+    pub topic: String,
+}
 
 /// Finds this engine's log files on the local machine.
 pub trait LogLocator: Send + Sync {
@@ -22,6 +39,12 @@ pub trait EngineSupport: Send + Sync {
     fn detect(&self, first_lines: &[&str]) -> Option<LogKind>;
 
     fn new_parser(&self, kind: LogKind) -> Box<dyn LogParser>;
+
+    /// Files and folders on this machine related to the log at `log`
+    /// (parsed into `doc`). Only ones that exist are returned.
+    fn companions(&self, _log: &Path, _kind: LogKind, _doc: &LogDocument) -> Vec<Companion> {
+        Vec::new()
+    }
 }
 
 /// How many leading lines are read to detect which engine wrote a log.

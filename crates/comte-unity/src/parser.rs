@@ -489,6 +489,7 @@ impl UnityParser {
                 ],
                 line: *line,
                 path: None,
+                topic: "licensing".to_owned(),
             }));
         }
     }
@@ -590,6 +591,7 @@ impl UnityParser {
                 if !self.hinted.contains(&id) {
                     self.hinted.push(id);
                     hint.line = p.entry.line_range.start;
+                    id.clone_into(&mut hint.topic);
                     out.push(ParseEvent::Hint(hint));
                 }
             }

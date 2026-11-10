@@ -36,6 +36,7 @@ pub fn rule_hint(text: &str, gpu: Option<&str>) -> Option<(&'static str, Hint)> 
         advice,
         line: 0,
         path: None,
+        topic: String::new(), // the rule id, set by the caller
     };
     let has = |needles: &[&str]| needles.iter().any(|n| text.contains(n));
 
@@ -486,6 +487,7 @@ pub fn crash_hint(
         advice,
         line,
         path: folder.map(str::to_owned),
+        topic: "crash".to_owned(),
     }
 }
 
