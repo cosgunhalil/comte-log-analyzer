@@ -51,6 +51,8 @@ pub struct Settings {
     pub theme: ThemeChoice,
     /// Show Unity rich text (`<color=cyan>`, `<b>`, `<i>`) styled instead of as tags.
     pub render_rich_text: bool,
+    /// What the minimap beside the list shows.
+    pub minimap: crate::minimap::MinimapKinds,
 }
 
 impl Default for Settings {
@@ -66,6 +68,7 @@ impl Default for Settings {
             follow_editor_log: false,
             theme: ThemeChoice::System,
             render_rich_text: true,
+            minimap: crate::minimap::MinimapKinds::default(),
         }
     }
 }
@@ -116,6 +119,10 @@ mod tests {
             follow_editor_log: true,
             theme: ThemeChoice::Dark,
             render_rich_text: false,
+            minimap: crate::minimap::MinimapKinds {
+                matches: false,
+                ..Default::default()
+            },
         };
         let text = toml::to_string_pretty(&settings).unwrap();
         assert_eq!(toml::from_str::<Settings>(&text).unwrap(), settings);

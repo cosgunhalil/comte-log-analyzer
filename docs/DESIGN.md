@@ -435,12 +435,24 @@ A short report to paste into Jira, Slack or a pull request, built by `comte-core
   - `↑` / `↓` move the selection, `Home` / `End` jump to the first or last entry, `Esc` clears it.
   - `1` / `2` / `3` toggle the errors / warnings / info buttons, in their on-screen order (only while no text box has focus).
   - `Ctrl+Shift+C` copies the selected entry's original lines. Plain `Ctrl+C` is left for copying text you've selected in the details.
+  - `B` bookmarks the selected entry or removes its bookmark; `F2` / `Shift+F2` go to the next or previous bookmark, wrapping around.
   - `F5` reloads, `Ctrl+O` opens a file, `Ctrl+S` saves the session (M6).
 - **Copying:**
-  - The details panel has **📋 Copy lines** (the original lines, exactly as in the log) and **Copy message** (without rich-text tags).
+  - The details panel has **📋 Copy lines** (the original lines, exactly as in the log), **Copy message** (without rich-text tags) and **Copy reference** (`Editor.log:120 [Error] first line of the message`, to point a teammate at it).
   - Right-clicking a row offers the same, plus "Open in editor".
   - The overview's **📋 Copy summary** copies the log's title, verdict, problem counts, environment facts and line count as plain text for a bug report, redacted like reports.
   - The status bar confirms what was copied. `COMTE_COPY=summary|lines|message` triggers a copy for automated checks.
+- **Bookmarks** (`comte-app::bookmarks`):
+  - Set with `B`, the 🔖 button in the details or the row's right-click menu. Bookmarked rows show 🔖 before the message.
+  - Stored as the entry's first line number per file, not its id, so they survive a reload of the same file and live-tail updates (lines are only appended). When live tail sees the file replaced (Unity restarted), that file's bookmarks are cleared.
+  - Listed under **BOOKMARKS** in the left panel (click to go there, right-click to remove).
+  - Kept only while the app runs; saved sessions don't store them yet.
+  - `COMTE_BOOKMARK=75,98` bookmarks the entries starting on those lines, for automated checks.
+- **Minimap** (`comte-app::minimap`):
+  - A 14 px strip to the right of the list. Errors and warnings are drawn on its left half, bookmarks (blue) and search matches (yellow, highlight-only search) on its right half. A frame shows the part of the list on screen.
+  - Marks are placed by row, so they line up with what the list shows, whatever is filtered or collapsed. A collapsed section header gets the error or warning mark of what it hides; section titles that match the search get a match mark.
+  - Click near a mark to select that entry; click elsewhere or drag to scroll there.
+  - Right-click to choose which kinds of marks it shows (saved in settings as `[minimap]`).
 - **Search** (`comte-app::search`):
   - **Words:** every word must appear somewhere in the entry (message without rich-text tags, details, stack frames, `file:line`), in any field and any order. `"a phrase"` keeps words together and in order, and `-word` / `-"a phrase"` excludes.
   - **Toggles:** **Aa** matches case, **.*** treats the whole text as one regular expression, and **▽** switches between hiding entries that don't match (the default) and only highlighting matches.

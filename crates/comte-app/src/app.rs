@@ -21,6 +21,7 @@ use eframe::egui::{
     vec2,
 };
 
+use crate::bookmarks::{Bookmarks, entry_reference, entry_starting_at};
 use crate::cli::{age, human_size};
 use crate::compare_view::{CompareAction, CompareView, compare_ui, previous_run};
 use crate::devtools::DevHooks;
@@ -31,6 +32,7 @@ use crate::ide::{
 };
 use crate::live::{LiveEvent, LiveTail};
 use crate::loader::{LoadEvent, Loaded, Loader};
+use crate::minimap::{self, Mark};
 use crate::overview::{Jump, overview};
 use crate::report_export::{
     BuiltReport, ReportOptions, build_report, report_file_name, system_summary,
@@ -49,6 +51,8 @@ use crate::view::{
 
 const SEARCH_ID: &str = "comte-search";
 const INDENT: f32 = 16.0;
+/// Width of the minimap strip beside the entry list.
+const MINIMAP_WIDTH: f32 = 14.0;
 
 pub struct ComteApp {
     sources: Vec<LogSource>,
@@ -86,6 +90,12 @@ pub struct ComteApp {
     ides: Option<Vec<DetectedIde>>,
     /// Lines added by the last live update, and when.
     live_activity: Option<(usize, Instant)>,
+    /// Entries marked with B / 🔖, per file.
+    bookmarks: Bookmarks,
+    /// Minimap marks for the current rows (rebuilt with them).
+    marks: Vec<Mark>,
+    /// Scroll the list to this row (after a minimap click).
+    scroll_to_row: Option<usize>,
     dev: DevHooks,
 }
 
@@ -163,6 +173,9 @@ impl ComteApp {
             compare: None,
             report_dialog: None,
             ides: None,
+            bookmarks: Bookmarks::default(),
+            marks: Vec::new(),
+            scroll_to_row: None,
             dev,
         };
         // Open what was asked for, or the Editor log: reading it is the main job.
@@ -229,6 +242,8 @@ impl ComteApp {
                     }
                 }
                 LiveEvent::Restarted(loaded) => {
+                    // A new log: old line numbers mean nothing in it.
+                    self.bookmarks.clear(&loaded.path);
                     self.collapsed = default_collapsed(&loaded.doc);
                     self.current = Some(loaded);
                     self.selected = None;
@@ -537,6 +552,14 @@ impl ComteApp {
                     self.rebuild_rows();
                     self.reveal(id);
                 }
+                if let Some(current) = &self.current {
+                    for &line in &self.dev.bookmarks {
+                        if !self.bookmarks.contains(&current.path, line) {
+                            self.bookmarks.toggle(&current.path, line);
+                        }
+                    }
+                    self.rebuild_marks();
+                }
                 if self.dev.open_save {
                     self.open_save_dialog();
                 }
@@ -582,6 +605,74 @@ impl ComteApp {
             .as_ref()
             .map_or(0, |c| count_matches(&c.doc, &self.filter, &self.query));
         self.rows_dirty = false;
+        self.rebuild_marks();
+    }
+
+    /// Recomputes the minimap marks (rows, bookmarks or minimap choices changed).
+    fn rebuild_marks(&mut self) {
+        let Some(current) = &self.current else {
+            self.marks.clear();
+            return;
+        };
+        let search_opens = search_opens_sections(&self.filter, &self.query);
+        // When the search filters, every row matches: no point marking them.
+        let matches = (!self.filter.search_filters).then_some(&self.query);
+        self.marks = minimap::marks(
+            &self.rows,
+            &current.doc,
+            self.settings.minimap,
+            |e| self.bookmarks.contains(&current.path, e.line_range.start),
+            |id| self.collapsed.contains(&id) && !search_opens,
+            matches,
+        );
+    }
+
+    // -- bookmarks -----------------------------------------------------------
+
+    /// Bookmarks entry `id`, or removes its bookmark (B, 🔖).
+    fn toggle_bookmark(&mut self, id: u64) {
+        let Some(current) = &self.current else {
+            return;
+        };
+        let Some(entry) = current.doc.entry(id) else {
+            return;
+        };
+        let line = entry.line_range.start;
+        let now_set = self.bookmarks.toggle(&current.path, line);
+        let count = self.bookmarks.count(&current.path);
+        self.notice = Some((
+            if now_set {
+                format!("Bookmarked line {line} ({count} in this log; F2 goes through them)")
+            } else {
+                format!("Removed the bookmark on line {line}")
+            },
+            Instant::now(),
+        ));
+        self.rebuild_marks();
+    }
+
+    /// Selects the next/previous bookmarked entry (F2 / Shift+F2).
+    fn jump_to_bookmark(&mut self, forward: bool) {
+        let Some(current) = &self.current else {
+            return;
+        };
+        let from = self
+            .selected
+            .and_then(|id| current.doc.entry(id))
+            .map(|e| e.line_range.start);
+        let target = self
+            .bookmarks
+            .next(&current.path, from, forward)
+            .and_then(|line| entry_starting_at(&current.doc, line));
+        match target {
+            Some(id) => self.reveal(id),
+            None => {
+                self.notice = Some((
+                    "No bookmarks in this log yet: press B on an entry".to_owned(),
+                    Instant::now(),
+                ));
+            }
+        }
     }
 
     /// Selects the next/previous entry the search matches (Enter, F3).
@@ -1191,6 +1282,10 @@ impl ComteApp {
                 comte_core::markup::plain(&entry.message),
                 "Copied the message".to_owned(),
             ),
+            CopyWhat::Reference => (
+                entry_reference(&current.title, entry),
+                format!("Copied a reference to line {}", entry.line_range.start),
+            ),
         };
         ctx.copy_text(text);
         self.notice = Some((notice, Instant::now()));
@@ -1287,6 +1382,18 @@ impl ComteApp {
         if prev_match {
             self.jump_to_match(false);
         }
+        let (next_bookmark, prev_bookmark) = ctx.input_mut(|i| {
+            (
+                i.consume_key(Modifiers::NONE, Key::F2),
+                i.consume_key(Modifiers::SHIFT, Key::F2),
+            )
+        });
+        if next_bookmark {
+            self.jump_to_bookmark(true);
+        }
+        if prev_bookmark {
+            self.jump_to_bookmark(false);
+        }
         let (open, reload, find, next, prev, escape, down, up) = ctx.input_mut(|i| {
             (
                 i.consume_key(Modifiers::COMMAND, Key::O),
@@ -1328,7 +1435,7 @@ impl ComteApp {
             }
         }
         if !typing {
-            let (errors, warnings, infos, home, end, copy) = ctx.input_mut(|i| {
+            let (errors, warnings, infos, home, end, copy, bookmark) = ctx.input_mut(|i| {
                 (
                     i.consume_key(Modifiers::NONE, Key::Num1),
                     i.consume_key(Modifiers::NONE, Key::Num2),
@@ -1336,8 +1443,12 @@ impl ComteApp {
                     i.consume_key(Modifiers::NONE, Key::Home),
                     i.consume_key(Modifiers::NONE, Key::End),
                     i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::C),
+                    i.consume_key(Modifiers::NONE, Key::B),
                 )
             });
+            if bookmark && let Some(id) = self.selected {
+                self.toggle_bookmark(id);
+            }
             // 1 / 2 / 3 toggle the severity buttons, in their on-screen order.
             if errors {
                 self.filter.show_errors = !self.filter.show_errors;
@@ -1540,6 +1651,8 @@ impl ComteApp {
     fn sources_panel(&mut self, ui: &mut Ui) {
         let current_path = self.current.as_ref().map(|c| c.path.clone());
         let mut to_open: Option<(PathBuf, String)> = None;
+        // (entry, remove): a bookmark clicked in the list, or removed.
+        let mut bookmark_action: Option<(u64, bool)> = None;
 
         egui::ScrollArea::vertical()
             .id_salt("sources")
@@ -1627,6 +1740,52 @@ impl ComteApp {
 
                 if let Some(c) = &self.current {
                     ui.add_space(12.0);
+                    ui.label(RichText::new("BOOKMARKS").small().strong().weak());
+                    let lines = self.bookmarks.lines(&c.path);
+                    if lines.is_empty() {
+                        ui.label(
+                            RichText::new("none yet (B bookmarks the selected entry)")
+                                .weak()
+                                .italics(),
+                        );
+                    }
+                    for line in lines {
+                        let Some(entry) =
+                            entry_starting_at(&c.doc, line).and_then(|id| c.doc.entry(id))
+                        else {
+                            continue;
+                        };
+                        let message = comte_core::markup::plain(&entry.message);
+                        let first = message.lines().next().unwrap_or_default();
+                        let label = RichText::new(format!(
+                            "{} {line}  {first}",
+                            severity_icon(entry.severity)
+                        ));
+                        let response = ui
+                            .add(
+                                egui::Button::selectable(self.selected == Some(entry.id), label)
+                                    .truncate(),
+                            )
+                            .on_hover_text(format!("Line {line}: {first}\nRight-click to remove"));
+                        if response.clicked() {
+                            bookmark_action = Some((entry.id, false));
+                        }
+                        response.context_menu(|ui| {
+                            if ui.button("Remove bookmark").clicked() {
+                                bookmark_action = Some((entry.id, true));
+                                ui.close();
+                            }
+                        });
+                    }
+                    if self.bookmarks.count(&c.path) > 1 {
+                        ui.label(
+                            RichText::new("F2 / Shift+F2 go through them")
+                                .weak()
+                                .small(),
+                        );
+                    }
+
+                    ui.add_space(12.0);
                     ui.label(RichText::new("CATEGORIES").small().strong().weak());
                     let mut per_category: BTreeMap<Category, usize> = BTreeMap::new();
                     for entry in c.doc.entries() {
@@ -1650,6 +1809,11 @@ impl ComteApp {
                 }
             });
 
+        match bookmark_action {
+            Some((id, false)) => self.reveal(id),
+            Some((id, true)) => self.toggle_bookmark(id),
+            None => {}
+        }
         if let Some((path, title)) = to_open {
             self.open(path, title, ui.ctx());
         }
@@ -1760,6 +1924,18 @@ impl ComteApp {
 
         let row_height = ui.text_style_height(&TextStyle::Body) + 8.0;
         let spacing = ui.spacing().item_spacing.y;
+        // The list on the left, the minimap strip on the right.
+        let full = ui.available_rect_before_wrap();
+        let strip_rect = egui::Rect::from_min_max(
+            egui::pos2(full.right() - MINIMAP_WIDTH, full.top()),
+            full.max,
+        );
+        let list_rect =
+            egui::Rect::from_min_max(full.min, egui::pos2(strip_rect.left() - 4.0, full.bottom()));
+        ui.advance_cursor_after_rect(full);
+        let mut strip_ui = ui.new_child(egui::UiBuilder::new().max_rect(strip_rect));
+        let mut list_ui = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));
+        let ui = &mut list_ui;
         let mut scroll = egui::ScrollArea::vertical()
             .id_salt("entries")
             .auto_shrink([false, false])
@@ -1784,6 +1960,10 @@ impl ComteApp {
                 scroll = scroll.vertical_scroll_offset(target.max(0.0));
             }
         }
+        if let Some(row) = self.scroll_to_row.take() {
+            let target = row as f32 * (row_height + spacing) - ui.available_height() / 2.0;
+            scroll = scroll.vertical_scroll_offset(target.max(0.0));
+        }
 
         let mut clicked_entry: Option<u64> = None;
         let mut double_clicked: Option<u64> = None;
@@ -1797,7 +1977,8 @@ impl ComteApp {
         let rich = self.settings.render_rich_text;
         let query = &self.query;
         let search_opens = search_opens_sections(&self.filter, query);
-        scroll.show_rows(ui, row_height, self.rows.len(), |ui, range| {
+        let bookmarks = &self.bookmarks;
+        let output = scroll.show_rows(ui, row_height, self.rows.len(), |ui, range| {
             for row in &self.rows[range] {
                 let (rect, response) =
                     ui.allocate_exact_size(vec2(ui.available_width(), row_height), Sense::click());
@@ -1827,6 +2008,7 @@ impl ComteApp {
                             || (repeats > 1
                                 && selected_fingerprint
                                     == Some((entry.fingerprint, entry.section_id)));
+                        let bookmarked = bookmarks.contains(&current.path, entry.line_range.start);
                         paint_entry_row(
                             ui,
                             rect,
@@ -1838,6 +2020,7 @@ impl ComteApp {
                                 repeats,
                                 selected: is_selected,
                                 rich,
+                                bookmarked,
                             },
                         );
                         if response.double_clicked() {
@@ -1847,12 +2030,26 @@ impl ComteApp {
                             clicked_entry = Some(id);
                         }
                         response.context_menu(|ui| {
+                            let label = if bookmarked {
+                                "Remove bookmark"
+                            } else {
+                                "🔖 Bookmark"
+                            };
+                            if ui.button(label).clicked() {
+                                menu_action = Some((id, RowAction::Bookmark));
+                                ui.close();
+                            }
+                            ui.separator();
                             if ui.button("📋 Copy lines").clicked() {
                                 menu_action = Some((id, RowAction::Copy(CopyWhat::Lines)));
                                 ui.close();
                             }
                             if ui.button("Copy message").clicked() {
                                 menu_action = Some((id, RowAction::Copy(CopyWhat::Message)));
+                                ui.close();
+                            }
+                            if ui.button("Copy reference").clicked() {
+                                menu_action = Some((id, RowAction::Copy(CopyWhat::Reference)));
                                 ui.close();
                             }
                             if entry.culprit().is_some() && ui.button("↗ Open in editor").clicked()
@@ -1865,6 +2062,40 @@ impl ComteApp {
                 }
             }
         });
+
+        // The minimap, with the visible part of the list framed.
+        let content = output.content_size.y.max(1.0);
+        let visible = output.inner_rect.height();
+        let viewport = if content <= visible {
+            (0.0, 1.0)
+        } else {
+            let start = (output.state.clamped_offset().y / content).clamp(0.0, 1.0);
+            (
+                start,
+                ((output.state.clamped_offset().y + visible) / content).clamp(start, 1.0),
+            )
+        };
+        let kinds_before = self.settings.minimap;
+        let map = minimap::draw(
+            &mut strip_ui,
+            strip_rect,
+            &self.marks,
+            self.rows.len(),
+            viewport,
+            &mut self.settings.minimap,
+        );
+        if self.settings.minimap != kinds_before {
+            self.rebuild_marks();
+        }
+        if let Some(row) = map.go_to_row {
+            self.scroll_to_row = Some(row);
+            if map.on_mark
+                && let Some(Row::Entry { id, .. }) = self.rows.get(row)
+            {
+                self.selected = Some(*id);
+            }
+            ui.ctx().request_repaint();
+        }
 
         if let Some(id) = toggled_section {
             if !self.collapsed.remove(&id) {
@@ -1887,6 +2118,10 @@ impl ComteApp {
             Some((id, RowAction::Open)) => {
                 self.selected = Some(id);
                 self.open_selected();
+            }
+            Some((id, RowAction::Bookmark)) => {
+                self.selected = Some(id);
+                self.toggle_bookmark(id);
             }
             None => {}
         }
@@ -1914,6 +2149,7 @@ impl ComteApp {
         let mut back = false;
         let mut open: Option<comte_core::SourceRef> = None;
         let mut copy: Option<(u64, CopyWhat)> = None;
+        let mut toggle_bookmark: Option<u64> = None;
         let links = Links {
             query: self.query.clone(),
             rich: self.settings.render_rich_text,
@@ -1943,9 +2179,16 @@ impl ComteApp {
                             back = true;
                         }
                         ui.add_space(4.0);
-                        let outcome = entry_details(ui, current, entry, repeats, &links);
+                        let bookmarked = self
+                            .bookmarks
+                            .contains(&current.path, entry.line_range.start);
+                        let outcome =
+                            entry_details(ui, current, entry, repeats, bookmarked, &links);
                         open = outcome.open;
                         copy = outcome.copy.map(|what| (entry.id, what));
+                        if outcome.toggle_bookmark {
+                            toggle_bookmark = Some(entry.id);
+                        }
                     }
                     None => jump = overview(ui, current),
                 }
@@ -1958,6 +2201,9 @@ impl ComteApp {
         }
         if let Some((id, what)) = copy {
             self.copy_entry(ui.ctx(), id, what);
+        }
+        if let Some(id) = toggle_bookmark {
+            self.toggle_bookmark(id);
         }
         match jump {
             Some(Jump::Entry(id)) => self.reveal(id),
@@ -2154,6 +2400,7 @@ struct RowLook<'a> {
     selected: bool,
     /// Render Unity rich text (`<color=…>`).
     rich: bool,
+    bookmarked: bool,
 }
 
 fn paint_entry_row(
@@ -2169,6 +2416,7 @@ fn paint_entry_row(
         repeats,
         selected,
         rich,
+        bookmarked,
     } = look;
     let visuals = ui.visuals();
     let painter = ui.painter_at(rect);
@@ -2229,8 +2477,19 @@ fn paint_entry_row(
     } else {
         visuals.text_color()
     };
+    let mut message_left = x + 22.0;
+    if bookmarked {
+        let star = painter.text(
+            egui::pos2(message_left, y),
+            Align2::LEFT_CENTER,
+            "🔖",
+            FontId::proportional(13.0),
+            minimap::bookmark_color(),
+        );
+        message_left = star.right() + 5.0;
+    }
     let message_rect = egui::Rect::from_min_max(
-        egui::pos2(x + 22.0, rect.top()),
+        egui::pos2(message_left, rect.top()),
         egui::pos2(right.max(x + 60.0), rect.bottom()),
     );
     // Unity rich text (`<color=cyan>…</color>`) is shown in color, tags hidden.
@@ -2286,6 +2545,7 @@ impl Links {
 struct DetailsOutcome {
     open: Option<comte_core::SourceRef>,
     copy: Option<CopyWhat>,
+    toggle_bookmark: bool,
 }
 
 /// Copy actions on an entry.
@@ -2295,6 +2555,8 @@ enum CopyWhat {
     Lines,
     /// The message without rich-text tags.
     Message,
+    /// `Editor.log:120 [Error] message`, to point a teammate at it.
+    Reference,
 }
 
 fn entry_details(
@@ -2302,10 +2564,12 @@ fn entry_details(
     current: &Loaded,
     entry: &LogEntry,
     repeats: u32,
+    bookmarked: bool,
     links: &Links,
 ) -> DetailsOutcome {
     let mut copy = None;
     let mut open = None;
+    let mut toggle_bookmark = false;
     let color = severity_color(ui.visuals(), entry.severity);
     ui.horizontal(|ui| {
         ui.label(
@@ -2315,6 +2579,22 @@ fn entry_details(
         );
         ui.label(RichText::new(entry.severity.label()).color(color).strong());
         ui.label(RichText::new(format!("· {}", entry.category)).weak());
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let (text, tip) = if bookmarked {
+                (
+                    RichText::new("🔖 Bookmarked").color(minimap::bookmark_color()),
+                    "Remove the bookmark (B)",
+                )
+            } else {
+                (
+                    RichText::new("🔖 Bookmark"),
+                    "Bookmark this entry (B); F2 goes through bookmarks",
+                )
+            };
+            if ui.small_button(text).on_hover_text(tip).clicked() {
+                toggle_bookmark = true;
+            }
+        });
     });
     ui.add_space(4.0);
     let mut message = message_job(
@@ -2350,6 +2630,13 @@ fn entry_details(
             .clicked()
         {
             copy = Some(CopyWhat::Message);
+        }
+        if ui
+            .button("Copy reference")
+            .on_hover_text("File, line, severity and message in one line, to point someone at it")
+            .clicked()
+        {
+            copy = Some(CopyWhat::Reference);
         }
     });
     if repeats > 1 {
@@ -2430,7 +2717,11 @@ fn entry_details(
                 }
             });
         });
-    DetailsOutcome { open, copy }
+    DetailsOutcome {
+        open,
+        copy,
+        toggle_bookmark,
+    }
 }
 
 /// User frames in bold; runs of engine/package frames folded. Locations of
@@ -2559,4 +2850,5 @@ fn searched_label(
 enum RowAction {
     Copy(CopyWhat),
     Open,
+    Bookmark,
 }
