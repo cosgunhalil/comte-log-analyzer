@@ -20,6 +20,8 @@
 //! - `COMTE_HUGE_KB=16`: treat logs over 16 KB as huge (read only their end).
 //! - `COMTE_PIN=12:note here,40`: pin the entries starting on these lines after
 //!   loading, with an optional note after `:`.
+//! - `COMTE_PACK=1`: open the support pack dialog after loading;
+//!   `COMTE_PACK_TO=pack.zip` writes the pack there right away (default options).
 //! - `COMTE_REPORT=1`: open the report dialog after loading (`=slack` for Slack style).
 //! - `COMTE_IDE_DRY_RUN=1`: print the editor command instead of starting it;
 //!   `COMTE_OPEN=1` opens the selected entry's location after loading.
@@ -54,6 +56,8 @@ pub struct DevHooks {
     pub copy: Option<String>,
     pub pins: Vec<(usize, String)>,
     pub report: bool,
+    pub pack: bool,
+    pub pack_to: Option<PathBuf>,
     pub report_slack: bool,
     pub ide_dry_run: bool,
     pub open_selected: bool,
@@ -93,6 +97,8 @@ impl DevHooks {
                 })
                 .unwrap_or_default(),
             report: var("COMTE_REPORT").is_some(),
+            pack: var("COMTE_PACK").as_deref() == Some("1"),
+            pack_to: var("COMTE_PACK_TO").map(PathBuf::from),
             report_slack: var("COMTE_REPORT").as_deref() == Some("slack"),
             ide_dry_run: var("COMTE_IDE_DRY_RUN").as_deref() == Some("1"),
             open_selected: var("COMTE_OPEN").as_deref() == Some("1"),

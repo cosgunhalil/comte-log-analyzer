@@ -71,6 +71,10 @@ paste a short report into Jira or Slack.
   note and tags. **Sensitive values are redacted by default**: user names,
   launcher tokens, licensing ids, player names and ids, emails, IPs and
   machine names.
+- **Packs it up for support.** 📦 Pack zips the log, the previous run, the
+  latest crash report, related logs and a summary (verdict, environment,
+  mods, known problems). Everything is redacted; the crash dump is left out
+  unless you ask, because process memory can't be redacted.
 - **Compares runs.** ⇄ Compare shows what's new, what's gone and what got
   slower since the previous run.
 - **Writes reports.** ⇪ Report creates a short Markdown or Slack summary to

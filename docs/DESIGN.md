@@ -407,6 +407,25 @@ A short report to paste into Jira, Slack or a pull request, built by `comte-core
 - **Redaction:** the same rules as sessions. User names are learned from the whole log, then the report is masked line by line.
 - **Tests:** snapshots of full reports (Player in Markdown and Slack, Editor in Markdown).
 
+### 6.4 Support pack (`.zip`)
+
+**📦 Pack…** in the toolbar zips everything a developer asks a player or tester for (`comte-app::pack`):
+
+| In the zip | From | Default |
+|---|---|---|
+| `summary.txt` | the summary (verdict, problems, environment), the user's note, mods one per line, "What this might be", the file list, and what was redacted | always |
+| `Player.log` (or the open log) | the lines in memory, so a huge log's shown part and a session's body | always |
+| `Player-prev.log` | the `-prev` file next to it | on |
+| `crash/*.log, *.txt, *.json, *.xml` | the newest sub-folder of the `Crash report` folder, when it exists on this machine | on |
+| `crash/*.dmp` | the same folder | **off**: process memory can't be redacted, and the dialog says so |
+| `related/*` | text companion logs (§1): `upm.log`, worker logs, the licensing log | on |
+
+- **Redaction** (on by default, plus "Also redact"): names are learned from every text file in the pack together, so a name seen only in the crash log is still masked in `Player.log`. Text files over 256 MB are left out.
+- **Mods:** BepInEx's `Loading [Name 1.2.3]` lines become `Mod` facts. They are listed in the summary and shown as "Mods: N loaded" (hover for the list) in Environment.
+- **Zip:** a small writer (`comte-app::zip`, deflate, UTF-8 names, no zip64) on `flate2` and `crc32fast`, which were already dependencies through `png`. It was checked with Windows' `Expand-Archive`.
+- **Saving:** to `Downloads` by default, as `<date>_<title>_support.zip`. The status bar says how many files were saved and how many values were redacted.
+- **Dev hooks:** `COMTE_PACK=1` opens the dialog; `COMTE_PACK_TO=pack.zip` writes a pack with the default options.
+
 ---
 
 ## 7. Compare two logs

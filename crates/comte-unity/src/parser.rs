@@ -81,6 +81,8 @@ regex!(BUILD_ASSET = r"^\s*(?P<size>[\d.]+ ?[kmgKMG]?[bB])\s+[\d.]+%\s+(?P<path>
 regex!(CRASH_MODULE = r"^\S.*:[^:\\/]+\.(?i:dll|exe) \([0-9A-Fa-f]+\), size: \d+");
 // `\t\tProcessInitializeOnLoadAttributes (179ms)` under `Domain Reload Profiling`.
 regex!(RELOAD_PHASE = r"^(?P<tabs>\t+)(?P<name>[A-Za-z][\w.]*) \((?P<ms>\d+)ms\)$");
+// BepInEx, the common Unity mod loader: `[Info   :   BepInEx] Loading [Better Maps 1.4.2]`.
+regex!(BEPINEX_PLUGIN = r"^\[(?:Info|Message)\s*:\s*BepInEx\] Loading \[(?P<name>[^\]]+)\]");
 regex!(POSIX_FRAME = r"^\s*#\d+\s+(?:pc\s+)?(?:0x)?[0-9a-fA-F]+\s+(?:in\s+)?(?P<func>.+)$");
 
 /// Which Unity program wrote the log.
@@ -1381,6 +1383,13 @@ impl LogParser for UnityParser {
         }
         self.scan_facts(line_no, text, out);
         self.scan_imports(line_no, text, out);
+        if let Some(c) = BEPINEX_PLUGIN.captures(text) {
+            out.push(ParseEvent::Fact(Fact::new(
+                FactKey::Mod,
+                c["name"].trim(),
+                line_no,
+            )));
+        }
         self.scan_licensing(line_no, text);
         if self.continue_pending(line_no, text, out) {
             return;
@@ -2233,6 +2242,26 @@ Cleanup mono
         assert!(top.your_code);
         assert_eq!((top.total.as_millis(), top.average.as_millis()), (800, 400));
         assert_eq!(doc.reload_profiles().len(), 2);
+    }
+
+    #[test]
+    fn mods_loaded_by_bepinex_are_facts() {
+        let doc = parse_reader(
+            Cursor::new(concat!(
+                "[Message:   BepInEx] BepInEx 5.4.22.0 - Valheim\n",
+                "[Info   :   BepInEx] Loading [Better Maps 1.4.2]\n",
+                "[Info   :   BepInEx] Loading [Quick Stack 0.9]\n",
+            )),
+            &mut PlayerParser::new(),
+        )
+        .unwrap();
+        let mods: Vec<&str> = doc
+            .facts()
+            .iter()
+            .filter(|f| f.key == FactKey::Mod)
+            .map(|f| f.value.as_str())
+            .collect();
+        assert_eq!(mods, ["Better Maps 1.4.2", "Quick Stack 0.9"]);
     }
 
     #[test]

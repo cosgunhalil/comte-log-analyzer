@@ -17,6 +17,7 @@ mod ide;
 mod live;
 mod loader;
 mod overview;
+mod pack;
 mod pins;
 mod report_export;
 mod save;
@@ -25,6 +26,7 @@ mod settings;
 mod strip;
 mod theme;
 mod view;
+mod zip;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

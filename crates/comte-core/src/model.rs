@@ -497,6 +497,8 @@ pub enum FactKey {
     StartDate,
     /// Folder where Unity's crash handler wrote a crash report.
     CrashReport,
+    /// A mod or plugin a mod loader loaded (one fact per mod).
+    Mod,
     Other(String),
 }
 
@@ -515,6 +517,7 @@ impl FactKey {
             FactKey::GamePath => "Game",
             FactKey::StartDate => "Started",
             FactKey::CrashReport => "Crash report",
+            FactKey::Mod => "Mods",
             FactKey::Other(name) => name,
         }
     }

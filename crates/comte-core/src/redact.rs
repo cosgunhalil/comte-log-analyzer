@@ -62,7 +62,14 @@ const VALUE_ON_NEXT_LINE: &[&str] = &[
 ];
 
 /// Path segments after `Users\` that are not personal.
-const NOT_USER_NAMES: &[&str] = &["public", "default", "all users", "<user>", "default user"];
+const NOT_USER_NAMES: &[&str] = &[
+    "public",
+    "default",
+    "all users",
+    "<user>",
+    "default user",
+    "shared", // macOS /Users/Shared
+];
 
 /// How many values were replaced, per rule.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -208,7 +215,12 @@ impl Redactor {
             }
         });
         apply(&mut text, "user names", &UNIX_USER_PATH, &|c| {
-            format!("{}<user>", &c[1])
+            // Also sees `C:/Users/Public`: shared folders are not people.
+            if is_user_name(&c[2]) {
+                format!("{}<user>", &c[1])
+            } else {
+                c[0].to_owned()
+            }
         });
         apply(&mut text, "user names", &USER_NAME_FIELD, &|c| {
             format!("{}<user>{}", &c[1], &c[3])
@@ -287,7 +299,12 @@ mod tests {
             r#"[Licensing::IpcConnector] Successfully connected to: "LicenseClient-cosgu" at "2026-11-05T17:59:24Z""#,
             r"Mono path[0] = 'C:/Users/John Smith/Games/X_Data/Managed'",
             r"C:\Users\Public\Documents\shared.txt",
+            "Crash report: C:/Users/Public/Game/Crashes and /Users/Shared/Game",
         ]);
+        assert_eq!(
+            out[5], "Crash report: C:/Users/Public/Game/Crashes and /Users/Shared/Game",
+            "shared folders with forward slashes are not people either"
+        );
         assert_eq!(
             out[0],
             r"Successfully changed project path to: C:\Users\<user>\OneDrive\Documents\Projects\Spirit Cabinet"

@@ -2,7 +2,8 @@
 //! same redaction as saved sessions.
 
 use comte_core::{
-    Comparison, Pin, RedactionReport, Redactor, ReportInput, ReportStyle, parse_tags, render_report,
+    Comparison, FactKey, Pin, RedactionReport, Redactor, ReportInput, ReportStyle, parse_tags,
+    render_report,
 };
 
 use crate::loader::Loaded;
@@ -90,6 +91,17 @@ pub fn build_report(
 /// verdict, problem counts and the environment (Unity version, OS, GPU, …).
 /// Redacted the same way as reports, since it's meant to be pasted elsewhere.
 pub fn system_summary(loaded: &Loaded, user_names: &[&str]) -> String {
+    let lines = summary_lines(loaded);
+    let mut redactor = Redactor::for_lines(&loaded.raw, user_names);
+    lines
+        .iter()
+        .map(|line| redactor.redact_line(line).into_owned())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The summary's lines, not redacted.
+pub fn summary_lines(loaded: &Loaded) -> Vec<String> {
     let doc = &loaded.doc;
     let verdict = &loaded.insights.verdict;
     let mut lines = vec![format!("{} ({})", loaded.title, loaded.kind_label)];
@@ -123,18 +135,31 @@ pub fn system_summary(loaded: &Loaded, user_names: &[&str]) -> String {
     ));
     let mut seen = Vec::new();
     for fact in doc.facts() {
+        if fact.key == FactKey::Mod {
+            continue; // listed together below
+        }
         if !seen.contains(&fact.key) {
             seen.push(fact.key.clone());
             lines.push(format!("{}: {}", fact.key.label(), fact.value));
         }
     }
+    let mods = mod_names(doc);
+    if !mods.is_empty() {
+        lines.push(format!("Mods ({}): {}", mods.len(), mods.join(", ")));
+    }
     lines.push(format!("Lines: {}", doc.line_count()));
-    let mut redactor = Redactor::for_lines(&loaded.raw, user_names);
     lines
-        .iter()
-        .map(|line| redactor.redact_line(line).into_owned())
-        .collect::<Vec<_>>()
-        .join("\n")
+}
+
+/// The mods a mod loader loaded, in load order, without repeats.
+pub fn mod_names(doc: &comte_core::LogDocument) -> Vec<&str> {
+    let mut mods: Vec<&str> = Vec::new();
+    for fact in doc.facts().iter().filter(|f| f.key == FactKey::Mod) {
+        if !mods.contains(&fact.value.as_str()) {
+            mods.push(&fact.value);
+        }
+    }
+    mods
 }
 
 /// `2026-11-09_14-05_Editor.md`

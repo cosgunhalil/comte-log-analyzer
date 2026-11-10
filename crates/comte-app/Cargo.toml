@@ -24,8 +24,10 @@ path = "src/bin/comte.rs"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 comte-core.workspace = true
 comte-unity.workspace = true
+crc32fast = "1.5.4"
 directories = "6.0.0"
 eframe = "0.37"
+flate2 = "1.1.11"
 png = "0.18"
 regex.workspace = true
 rfd = "0.18"

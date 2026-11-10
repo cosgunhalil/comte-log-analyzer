@@ -33,6 +33,7 @@ use crate::ide::{
 use crate::live::{LiveEvent, LiveTail};
 use crate::loader::{LoadEvent, Loaded, Loader};
 use crate::overview::{Jump, hint_card, overview};
+use crate::pack::{Group, PackItem, PackOptions, pack_file_name};
 use crate::pins::{Pins, entry_reference};
 use crate::report_export::{
     BuiltReport, ReportOptions, build_report, report_file_name, system_summary,
@@ -89,6 +90,7 @@ pub struct ComteApp {
     /// The comparison report, when comparing the open log (B) with another (A).
     compare: Option<CompareView>,
     report_dialog: Option<ReportDialog>,
+    pack_dialog: Option<PackDialog>,
     /// Editors found on this machine; detected on first use.
     ides: Option<Vec<DetectedIde>>,
     /// Lines added by the last live update, and when.
@@ -122,6 +124,13 @@ struct SaveDialog {
     preview_inputs: (ContentChoice, bool, String),
     full_lines: usize,
     visible_lines: usize,
+    error: Option<String>,
+}
+
+/// State of the "Support pack" dialog.
+struct PackDialog {
+    options: PackOptions,
+    items: Vec<PackItem>,
     error: Option<String>,
 }
 
@@ -187,6 +196,7 @@ impl ComteApp {
             settings_open: dev.settings_open,
             compare: None,
             report_dialog: None,
+            pack_dialog: None,
             ides: None,
             pins: Pins::default(),
             strip: StripData::default(),
@@ -670,6 +680,13 @@ impl ComteApp {
                 if self.dev.report {
                     self.open_report_dialog();
                 }
+                if self.dev.pack || self.dev.pack_to.is_some() {
+                    self.open_pack_dialog();
+                    if let Some(to) = self.dev.pack_to.clone() {
+                        self.write_pack(&to);
+                        self.pack_dialog = None;
+                    }
+                }
                 if self.dev.compare && self.compare.is_none() {
                     self.start_compare(ctx);
                 }
@@ -868,6 +885,218 @@ impl ComteApp {
     }
 
     // -- report ----------------------------------------------------------------
+
+    // -- support pack --------------------------------------------------------
+
+    fn open_pack_dialog(&mut self) {
+        let Some(current) = &self.current else {
+            return;
+        };
+        self.pack_dialog = Some(PackDialog {
+            options: PackOptions::default(),
+            items: crate::pack::plan(current),
+            error: None,
+        });
+    }
+
+    /// Names to redact besides what the log reveals: this machine's user and
+    /// the "Also redact" words.
+    fn extra_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = current_user_name().into_iter().collect();
+        names.extend(
+            self.extra_redactions
+                .split(',')
+                .map(str::trim)
+                .filter(|w| !w.is_empty())
+                .map(str::to_owned),
+        );
+        names
+    }
+
+    /// Builds the pack and writes it to `path`.
+    fn write_pack(&mut self, path: &Path) {
+        let names = self.extra_names();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let (Some(current), Some(dialog)) = (&self.current, &mut self.pack_dialog) else {
+            return;
+        };
+        let now = chrono::Local::now().naive_local();
+        let result = crate::pack::build(current, &dialog.items, &dialog.options, &names, now)
+            .and_then(|pack| std::fs::write(path, &pack.zip).map(|()| pack));
+        match result {
+            Ok(pack) => {
+                let redacted = match &pack.redaction {
+                    Some(r) if r.total > 0 => format!(", {} values redacted", r.total),
+                    Some(_) => ", nothing sensitive found".to_owned(),
+                    None => ", not redacted".to_owned(),
+                };
+                self.notice = Some((
+                    format!(
+                        "Saved support pack {} ({} files, {}{redacted})",
+                        path.display(),
+                        pack.files.len(),
+                        comte_core::format_bytes(pack.zip.len() as u64)
+                    ),
+                    Instant::now(),
+                ));
+                self.pack_dialog = None;
+            }
+            Err(e) => dialog.error = Some(format!("Could not save the pack: {e}")),
+        }
+    }
+
+    fn pack_dialog_ui(&mut self, ctx: &egui::Context) {
+        let Some(current) = &self.current else {
+            self.pack_dialog = None;
+            return;
+        };
+        let title = current.title.clone();
+        let Some(dialog) = &mut self.pack_dialog else {
+            return;
+        };
+        let mut save = false;
+        let mut cancel = false;
+        let extra = &mut self.extra_redactions;
+        let size_of = |group: Group| -> (usize, u64) {
+            dialog
+                .items
+                .iter()
+                .filter(|i| i.group == group)
+                .fold((0, 0), |(n, b), i| (n + 1, b + i.bytes))
+        };
+        let names_of = |group: Group| -> String {
+            dialog
+                .items
+                .iter()
+                .filter(|i| i.group == group)
+                .map(|i| i.name.rsplit('/').next().unwrap_or(&i.name).to_owned())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let response = egui::Modal::new(egui::Id::unique("support-pack")).show(ctx, |ui| {
+            ui.set_width(560.0);
+            ui.heading("📦 Support pack");
+            ui.label(
+                RichText::new(
+                    "One zip with what a developer needs to look into this: the logs, the \
+                     latest crash report, related logs and a summary (verdict, environment, \
+                     mods, known problems).",
+                )
+                .weak(),
+            );
+            ui.add_space(8.0);
+            ui.label(RichText::new("Contents").strong());
+            let (_, log_bytes) = size_of(Group::Log);
+            ui.add_enabled(false, egui::Checkbox::new(&mut true, format!(
+                "{} ({}) and summary.txt",
+                names_of(Group::Log),
+                comte_core::format_bytes(log_bytes)
+            )));
+            let (n, bytes) = size_of(Group::PreviousRun);
+            if n > 0 {
+                ui.checkbox(
+                    &mut dialog.options.previous_run,
+                    format!("Previous run: {} ({})", names_of(Group::PreviousRun), comte_core::format_bytes(bytes)),
+                );
+            }
+            let (n, bytes) = size_of(Group::CrashReport);
+            let (dumps, dump_bytes) = size_of(Group::CrashDump);
+            if n + dumps > 0 {
+                ui.checkbox(
+                    &mut dialog.options.crash_report,
+                    format!("Latest crash report: {} ({})", names_of(Group::CrashReport), comte_core::format_bytes(bytes)),
+                );
+                if dumps > 0 {
+                    ui.add_enabled_ui(dialog.options.crash_report, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.checkbox(
+                                &mut dialog.options.crash_dump,
+                                format!("Crash dump: {} ({})", names_of(Group::CrashDump), comte_core::format_bytes(dump_bytes)),
+                            )
+                            .on_hover_text("Lets a developer open the crash in a debugger");
+                        });
+                        ui.horizontal(|ui| {
+                            ui.add_space(44.0);
+                            ui.label(
+                                RichText::new(
+                                    "⚠ Process memory: it can't be redacted. Include it only \
+                                     if a developer asks for it.",
+                                )
+                                .small()
+                                .color(ui.visuals().warn_fg_color),
+                            );
+                        });
+                    });
+                }
+            } else if current.doc.fact(&comte_core::FactKey::CrashReport).is_some() {
+                ui.label(
+                    RichText::new("The crash report folder isn't on this machine.")
+                        .weak()
+                        .small(),
+                );
+            }
+            let (n, bytes) = size_of(Group::Related);
+            if n > 0 {
+                ui.checkbox(
+                    &mut dialog.options.related_logs,
+                    format!("Related logs: {} ({})", names_of(Group::Related), comte_core::format_bytes(bytes)),
+                );
+            }
+
+            ui.add_space(8.0);
+            ui.label(RichText::new("Note").strong());
+            ui.add(
+                egui::TextEdit::multiline(&mut dialog.options.note)
+                    .hint_text("What happened? What were you doing when it went wrong?")
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY),
+            );
+            ui.add_space(8.0);
+            ui.checkbox(&mut dialog.options.redact, RichText::new("Redact sensitive values").strong())
+                .on_hover_text("User names, tokens, licensing ids, player names and ids, emails, IPs, machine names");
+            ui.add_enabled_ui(dialog.options.redact, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Also redact:");
+                    ui.add(
+                        egui::TextEdit::singleline(extra)
+                            .hint_text("your display name, studio name, …")
+                            .desired_width(f32::INFINITY),
+                    );
+                });
+            });
+            if let Some(error) = &dialog.error {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            }
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("📦 Save pack…").strong()).clicked() {
+                    save = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+        if cancel || response.should_close() {
+            self.pack_dialog = None;
+            return;
+        }
+        if save {
+            let name = pack_file_name(&title, &chrono::Local::now());
+            let folder = directories::UserDirs::new()
+                .and_then(|d| d.download_dir().map(Path::to_path_buf))
+                .unwrap_or_else(save::default_dir);
+            if let Some(path) = rfd::FileDialog::new()
+                .set_file_name(&name)
+                .set_directory(folder)
+                .add_filter("Zip", &["zip"])
+                .save_file()
+            {
+                self.write_pack(&path);
+            }
+        }
+    }
 
     fn open_report_dialog(&mut self) {
         let Some(current) = &self.current else {
@@ -1530,7 +1759,8 @@ impl ComteApp {
     // -- input ----------------------------------------------------------------
 
     fn handle_input(&mut self, ctx: &egui::Context) {
-        if self.save_dialog.is_some() || self.report_dialog.is_some() {
+        if self.save_dialog.is_some() || self.report_dialog.is_some() || self.pack_dialog.is_some()
+        {
             return; // the dialog owns the keyboard (Esc closes it)
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::E)) {
@@ -1712,6 +1942,13 @@ impl ComteApp {
                 .clicked()
             {
                 self.open_save_dialog();
+            }
+            if ui
+                .add_enabled(can_reload, egui::Button::new("📦 Pack…"))
+                .on_hover_text("Zip the logs, crash report and a summary to send to a developer")
+                .clicked()
+            {
+                self.open_pack_dialog();
             }
             if ui
                 .add_enabled(can_reload, egui::Button::new("⇪ Report…"))
@@ -2560,6 +2797,7 @@ impl eframe::App for ComteApp {
         self.settings_window(&ctx);
         self.persist_settings();
         self.report_dialog_ui(&ctx);
+        self.pack_dialog_ui(&ctx);
         self.drop_overlay(&ctx);
         self.dev.after_frame(
             &ctx,

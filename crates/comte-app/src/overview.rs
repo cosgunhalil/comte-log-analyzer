@@ -249,7 +249,17 @@ pub fn overview(ui: &mut Ui, current: &Loaded, trends: &[Trend]) -> Option<Jump>
             .spacing([12.0, 4.0])
             .show(ui, |ui| {
                 let mut seen = HashSet::new();
+                let mods = crate::report_export::mod_names(&current.doc);
                 for fact in facts {
+                    if fact.key == comte_core::FactKey::Mod {
+                        if seen.insert(fact.key.clone()) {
+                            ui.label(RichText::new("Mods").weak());
+                            ui.label(format!("{} loaded", mods.len()))
+                                .on_hover_text(mods.join("\n"));
+                            ui.end_row();
+                        }
+                        continue;
+                    }
                     if seen.insert(fact.key.clone()) {
                         ui.label(RichText::new(fact.key.label()).weak());
                         ui.label(&fact.value);
