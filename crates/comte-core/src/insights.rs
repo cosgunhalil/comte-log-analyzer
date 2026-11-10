@@ -276,10 +276,18 @@ fn reload_phases(doc: &LogDocument) -> Vec<PhaseTotal> {
 }
 
 fn stopped_verdict(doc: &LogDocument, unfinished: &Unfinished) -> Verdict {
-    let mut details = vec![format!(
-        "Started on line {} and never finished. {}",
-        unfinished.line, unfinished.hint
-    )];
+    let mut details = vec![match unfinished.running_for {
+        Some(d) => format!(
+            "Started on line {} and still not finished {} later, at the log's last line. {}",
+            unfinished.line,
+            crate::model::format_duration(d),
+            unfinished.hint
+        ),
+        None => format!(
+            "Started on line {} and never finished. {}",
+            unfinished.line, unfinished.hint
+        ),
+    }];
     match unfinished.also.as_slice() {
         [] => {}
         [one] => details.push(format!("Also still running: {one}")),
@@ -536,6 +544,7 @@ mod tests {
                 subject: Some("Assets/Ship.fbx".to_owned()),
                 line: 5,
                 also: vec!["importing Assets/c.png".to_owned()],
+                running_for: None,
             }),
         ]));
         let v = &insights.verdict;

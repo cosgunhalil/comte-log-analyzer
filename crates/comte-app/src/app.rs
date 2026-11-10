@@ -2448,6 +2448,13 @@ impl ComteApp {
         let query = &self.query;
         let search_opens = search_opens_sections(&self.filter, query);
         let pins = &self.pins;
+        // Logs written with `-timestamps`: show each row's time.
+        let times = current
+            .doc
+            .entries()
+            .iter()
+            .take(50)
+            .any(|e| e.time.is_some());
         let output = scroll.show_rows(ui, row_height, self.rows.len(), |ui, range| {
             for row in &self.rows[range] {
                 let (rect, response) =
@@ -2491,6 +2498,7 @@ impl ComteApp {
                                 selected: is_selected,
                                 rich,
                                 pinned,
+                                times,
                             },
                         );
                         if response.double_clicked() {
@@ -2891,6 +2899,23 @@ fn paint_section_row(
     );
 }
 
+/// `14:02:11` (or `14:02:11.580`) in local time, from UTC milliseconds.
+fn local_clock(millis: i64, with_millis: bool) -> String {
+    chrono::DateTime::from_timestamp_millis(millis)
+        .map(|t| {
+            let local = t.with_timezone(&chrono::Local);
+            if with_millis {
+                local.format("%H:%M:%S%.3f").to_string()
+            } else {
+                local.format("%H:%M:%S").to_string()
+            }
+        })
+        .unwrap_or_default()
+}
+
+/// Width of the time column in entry rows, for logs with timestamps.
+const TIME_WIDTH: f32 = 60.0;
+
 /// How an entry row is shown.
 struct RowLook<'a> {
     /// Search matches to highlight.
@@ -2902,6 +2927,8 @@ struct RowLook<'a> {
     /// Render Unity rich text (`<color=…>`).
     rich: bool,
     pinned: bool,
+    /// The log has timestamps: draw this row's time in a column on the left.
+    times: bool,
 }
 
 fn paint_entry_row(
@@ -2918,6 +2945,7 @@ fn paint_entry_row(
         selected,
         rich,
         pinned,
+        times,
     } = look;
     let visuals = ui.visuals();
     let painter = ui.painter_at(rect);
@@ -2928,7 +2956,20 @@ fn paint_entry_row(
     }
 
     let y = rect.center().y;
-    let x = rect.left() + 6.0 + f32::from(depth) * INDENT;
+    let mut left = rect.left() + 6.0;
+    if times {
+        if let Some(time) = entry.time {
+            painter.text(
+                egui::pos2(left, rect.center().y),
+                Align2::LEFT_CENTER,
+                local_clock(time, false),
+                FontId::monospace(11.0),
+                visuals.weak_text_color(),
+            );
+        }
+        left += TIME_WIDTH;
+    }
+    let x = left + f32::from(depth) * INDENT;
     painter.text(
         egui::pos2(x, y),
         Align2::LEFT_CENTER,
@@ -3202,6 +3243,22 @@ fn entry_details(
                 entry.line_range.end.saturating_sub(1)
             ));
             ui.end_row();
+            if let Some(time) = entry.time {
+                ui.label(RichText::new("Time").weak());
+                let start = current.doc.entries().iter().find_map(|e| e.time);
+                let since = start
+                    .and_then(|s| u64::try_from(time - s).ok())
+                    .map(|ms| {
+                        format!(
+                            " · {} after the log started",
+                            format_duration(std::time::Duration::from_millis(ms))
+                        )
+                    })
+                    .unwrap_or_default();
+                ui.label(format!("{}{since}", local_clock(time, true)))
+                    .on_hover_text("Local time (the log writes UTC)");
+                ui.end_row();
+            }
         });
 
     if !entry.details.is_empty() {

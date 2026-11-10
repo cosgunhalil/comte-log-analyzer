@@ -46,6 +46,7 @@ pub use insights::{Insights, PhaseTotal, Repeated, Timed, TimingTotal, Verdict, 
 pub use model::{
     Category, Fact, FactKey, FrameKind, LogEntry, Metric, MetricKind, MetricValue, Section,
     SectionKind, Severity, SeverityCounts, SourceRef, StackFrame, format_duration,
+    parse_utc_millis,
 };
 pub use parser::{LogParser, ParseEvent, PlainTextParser, SectionStart};
 pub use reader::{LineReader, parse_file, parse_reader, read_head};

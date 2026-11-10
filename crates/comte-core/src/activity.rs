@@ -31,6 +31,8 @@ pub struct Unfinished {
     pub line: usize,
     /// Other operations also still running ("importing Assets/b.png").
     pub also: Vec<String>,
+    /// For logs with timestamps: from its start to the log's last line.
+    pub running_for: Option<Duration>,
 }
 
 /// A known problem recognized in the log, explained in plain words: what it

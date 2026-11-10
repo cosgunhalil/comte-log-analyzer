@@ -19,11 +19,12 @@ use comte_core::{
     AssetImport, BuildReport, Category, Fact, FactKey, FrameKind, LogEntry, LogParser, Metric,
     MetricKind, ParseEvent, ReloadPhase, ReloadProfile, SectionKind, SectionStart, Severity,
     SizeRow, SourceRef, StackFrame, Unfinished, format_bytes, format_duration, parse_size,
+    parse_utc_millis,
 };
 
 use crate::common::{
     file_name, graphics_fact, is_exception_header, millis, parse_filename_line, parse_unloading,
-    secs,
+    secs, split_timestamp,
 };
 use crate::frames::{self, ParsedFrame};
 use crate::hints::{CrashStats, crash_hint, entry_text, rule_hint};
@@ -303,9 +304,20 @@ pub struct UnityParser {
     started: bool,
     /// First line of each open section, parallel to `open`.
     open_lines: Vec<usize>,
-    /// Imports started but not finished: (worker, path, line), oldest first.
-    importing: Vec<(Option<u32>, String, usize)>,
+    /// When each open section started (timestamped logs), parallel to `open`.
+    open_times: Vec<Option<i64>>,
+    /// Imports started but not finished: (worker, path, line, time), oldest first.
+    importing: Vec<(Option<u32>, String, usize, Option<i64>)>,
     last_line: usize,
+    /// Time of the line being read, and of the last timestamped line.
+    current_time: Option<i64>,
+    last_time: Option<i64>,
+    /// Signs of two Editors writing one log: a second header, the project
+    /// paths seen, garbled lines (first line, count).
+    second_header: Option<usize>,
+    header_seen: bool,
+    projects: Vec<(String, usize)>,
+    garbled: Option<(usize, usize)>,
     /// The GPU, once the graphics block named it.
     gpu: Option<String>,
     /// Native crashes seen: (line, stack, counts). Triaged in `finish`,
@@ -331,8 +343,15 @@ impl UnityParser {
             scene_count: 0,
             started: false,
             open_lines: Vec::new(),
+            open_times: Vec::new(),
             importing: Vec::new(),
             last_line: 0,
+            current_time: None,
+            last_time: None,
+            second_header: None,
+            header_seen: false,
+            projects: Vec::new(),
+            garbled: None,
             gpu: None,
             crashes: Vec::new(),
             crash_folder: None,
@@ -362,6 +381,7 @@ impl UnityParser {
         out.push(ParseEvent::SectionStart(SectionStart { kind, title, line }));
         self.open.push(kind);
         self.open_lines.push(line);
+        self.open_times.push(self.current_time);
     }
 
     /// Closes `kind` and everything nested inside it. No-op if not open.
@@ -377,6 +397,7 @@ impl UnityParser {
         }
         while let Some(open) = self.open.pop() {
             self.open_lines.pop();
+            self.open_times.pop();
             let done = open == kind;
             out.push(ParseEvent::SectionEnd {
                 line,
@@ -390,6 +411,7 @@ impl UnityParser {
 
     fn close_all(&mut self, line: usize, out: &mut Vec<ParseEvent>) {
         self.open_lines.clear();
+        self.open_times.clear();
         while self.open.pop().is_some() {
             out.push(ParseEvent::SectionEnd {
                 line,
@@ -402,10 +424,19 @@ impl UnityParser {
         self.open.contains(&kind)
     }
 
-    /// First line of the innermost open section of `kind`.
-    fn open_since(&self, kind: SectionKind) -> Option<usize> {
+    /// First line (and time) of the innermost open section of `kind`.
+    fn open_since(&self, kind: SectionKind) -> Option<(usize, Option<i64>)> {
         let i = self.open.iter().rposition(|k| *k == kind)?;
-        self.open_lines.get(i).copied()
+        Some((
+            *self.open_lines.get(i)?,
+            self.open_times.get(i).copied().flatten(),
+        ))
+    }
+
+    /// From `since` to the log's last timestamped line.
+    fn running_for(&self, since: Option<i64>) -> Option<Duration> {
+        let (since, last) = (since?, self.last_time?);
+        u64::try_from(last - since).ok().map(Duration::from_millis)
     }
 
     // -- imports and unfinished work ----------------------------------------
@@ -426,13 +457,13 @@ impl UnityParser {
                 }));
             } else {
                 // A worker starts its next import only after the last one.
-                self.importing.retain(|(w, _, _)| *w != worker);
-                self.importing.push((worker, path, n));
+                self.importing.retain(|(w, _, _, _)| *w != worker);
+                self.importing.push((worker, path, n, self.current_time));
             }
         } else if let Some(c) = IMPORT_DONE.captures(text) {
             let worker = c.name("worker").and_then(|w| w.as_str().parse().ok());
-            if let Some(i) = self.importing.iter().position(|(w, _, _)| *w == worker) {
-                let (_, path, line) = self.importing.remove(i);
+            if let Some(i) = self.importing.iter().position(|(w, _, _, _)| *w == worker) {
+                let (_, path, line, _) = self.importing.remove(i);
                 if let Some(d) = secs(&c["secs"]) {
                     out.push(ParseEvent::Import(AssetImport {
                         path,
@@ -441,6 +472,26 @@ impl UnityParser {
                     }));
                 }
             }
+        }
+    }
+
+    /// Two Editors writing one log: a second header, a second project, or
+    /// garbled text (both writing the same bytes at once).
+    fn watch_for_interleaving(&mut self, n: usize, text: &str) {
+        if text.starts_with("Built from '") {
+            if self.header_seen {
+                self.second_header.get_or_insert(n);
+            }
+            self.header_seen = true;
+        }
+        if let Some(c) = PROJECT_PATH.captures(text) {
+            let path = c["path"].trim().to_owned();
+            if !self.projects.iter().any(|(p, _)| *p == path) {
+                self.projects.push((path, n));
+            }
+        }
+        if text.contains(['\0', '\u{FFFD}']) {
+            self.garbled.get_or_insert((n, 0)).1 += 1;
         }
     }
 
@@ -469,8 +520,49 @@ impl UnityParser {
     }
 
     /// Hints that need the whole log: crash triage (the crash folder comes
-    /// after the stack) and licensing (it only failed if it never connected).
+    /// after the stack), licensing (it only failed if it never connected) and
+    /// two Editors in one log.
     fn final_hints(&self, out: &mut Vec<ParseEvent>) {
+        let second_project = self.projects.get(1).map(|(_, line)| *line);
+        if let Some(line) = self.second_header.or(second_project) {
+            let mut advice = vec![
+                "Lines from both are mixed, so sections, timings and the verdict can be \
+                 wrong. Look at each Editor's part separately."
+                    .to_owned(),
+            ];
+            if self.projects.len() > 1 {
+                let names: Vec<&str> = self.projects.iter().map(|(p, _)| p.as_str()).collect();
+                advice.push(format!("Projects in this log: {}.", names.join(", ")));
+            }
+            advice.push(
+                "Give each Editor its own log: since Unity 2021.2 each project writes \
+                 <Project>/Logs/Editor.log by default; otherwise start each with \
+                 -logFile <path>."
+                    .to_owned(),
+            );
+            out.push(ParseEvent::Hint(comte_core::Hint {
+                title: "Two Unity Editors wrote into this log at once".to_owned(),
+                advice,
+                line,
+                path: None,
+                topic: "instances".to_owned(),
+            }));
+        } else if let Some((line, count)) = self.garbled.filter(|(_, count)| *count >= 3) {
+            out.push(ParseEvent::Hint(comte_core::Hint {
+                title: format!("{count} lines of this log are garbled"),
+                advice: vec![
+                    "Usually two Unity processes writing the same file at once (two Editors \
+                     sharing the global Editor.log), or a log copied while it was written."
+                        .to_owned(),
+                    "Give each Editor its own log with -logFile <path>, or use the \
+                     project's Logs/Editor.log."
+                        .to_owned(),
+                ],
+                line,
+                path: None,
+                topic: "instances".to_owned(),
+            }));
+        }
         for (line, stack, stats) in &self.crashes {
             out.push(ParseEvent::Hint(crash_hint(
                 stack,
@@ -510,7 +602,7 @@ impl UnityParser {
         if self.is_player() {
             return None;
         }
-        if let Some(((_, path, line), rest)) = self.importing.split_first() {
+        if let Some(((_, path, line, time), rest)) = self.importing.split_first() {
             return Some(Unfinished {
                 headline: format!("Stopped while importing {path}"),
                 hint: "Unity is stuck on this asset, or quit before it was done. If it stays stuck, move the asset out of Assets and reopen the project to confirm."
@@ -519,12 +611,13 @@ impl UnityParser {
                 line: *line,
                 also: rest
                     .iter()
-                    .map(|(_, path, _)| format!("importing {path}"))
+                    .map(|(_, path, _, _)| format!("importing {path}"))
                     .collect(),
+                running_for: self.running_for(*time),
             });
         }
-        let recent = |line: &usize| line + STOPPED_WINDOW >= self.last_line;
-        if let Some(line) = self.open_since(SectionKind::DomainReload).filter(recent) {
+        let recent = |&(line, _): &(usize, Option<i64>)| line + STOPPED_WINDOW >= self.last_line;
+        if let Some((line, time)) = self.open_since(SectionKind::DomainReload).filter(recent) {
             return Some(Unfinished {
                 headline: "Stopped during a domain reload".to_owned(),
                 hint: "Unity was reloading scripts. Code that never returns in a static constructor or an [InitializeOnLoad] method is a common cause."
@@ -532,9 +625,10 @@ impl UnityParser {
                 subject: None,
                 line,
                 also: Vec::new(),
+                running_for: self.running_for(time),
             });
         }
-        if let Some(line) = self.open_since(SectionKind::Compile).filter(recent) {
+        if let Some((line, time)) = self.open_since(SectionKind::Compile).filter(recent) {
             return Some(Unfinished {
                 headline: "Stopped while compiling scripts".to_owned(),
                 hint: "The compiler never reported back. Look for a stuck bee_backend process, or a crash right after this point."
@@ -542,6 +636,7 @@ impl UnityParser {
                 subject: None,
                 line,
                 also: Vec::new(),
+                running_for: self.running_for(time),
             });
         }
         None
@@ -615,7 +710,10 @@ impl UnityParser {
         }
     }
 
-    fn start(&mut self, pending: Pending, out: &mut Vec<ParseEvent>) {
+    fn start(&mut self, mut pending: Pending, out: &mut Vec<ParseEvent>) {
+        if pending.entry.time.is_none() {
+            pending.entry.time = self.current_time;
+        }
         self.flush(out);
         self.pending = Some(pending);
     }
@@ -1376,6 +1474,22 @@ impl LogParser for UnityParser {
             );
         }
         self.last_line = line_no;
+        let line = match split_timestamp(line) {
+            Some((ts, rest)) => {
+                self.current_time = parse_utc_millis(ts);
+                if self.last_time.is_none() && self.is_player() {
+                    // Player logs have no `Date:` line: the first stamp is the start.
+                    out.push(ParseEvent::Fact(Fact::new(FactKey::StartDate, ts, line_no)));
+                }
+                self.last_time = self.current_time.or(self.last_time);
+                rest
+            }
+            None => {
+                self.current_time = None;
+                line
+            }
+        };
+        self.watch_for_interleaving(line_no, line);
         let text = line.trim_end();
         if text.is_empty() {
             self.on_blank(line_no, out);
@@ -2262,6 +2376,78 @@ Cleanup mono
             .map(|f| f.value.as_str())
             .collect();
         assert_eq!(mods, ["Better Maps 1.4.2", "Quick Stack 0.9"]);
+    }
+
+    #[test]
+    fn timestamped_logs_parse_like_plain_ones_and_keep_the_time() {
+        let plain = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/editor_session.log"),
+        )
+        .unwrap();
+        let stamped: String = plain
+            .lines()
+            .enumerate()
+            .map(|(i, line)| {
+                format!(
+                    "2026-11-05T17:{:02}:{:02}.{:03}Z|0x3598|{line}\n",
+                    i / 60,
+                    i % 60,
+                    i % 1000
+                )
+            })
+            .collect();
+        let a = parse(&plain);
+        let b = parse(&stamped);
+        assert_eq!(a.entries().len(), b.entries().len());
+        assert_eq!(a.sections().len(), b.sections().len());
+        assert_eq!(a.counts(), b.counts());
+        assert_eq!(a.metrics().len(), b.metrics().len());
+        assert!(a.entries().iter().all(|e| e.time.is_none()));
+        let first = &b.entries()[0];
+        assert_eq!(
+            first.time,
+            comte_core::parse_utc_millis("2026-11-05T17:00:00.000Z")
+        );
+    }
+
+    #[test]
+    fn a_stopped_import_says_how_long_it_ran_when_lines_have_times() {
+        let doc = parse(concat!(
+            "2026-11-05T17:00:00.000Z|0x1|[Worker0] Start importing Assets/Huge.fbx using Guid(01) Importer(1,2) \n",
+            "2026-11-05T17:03:00.000Z|0x2|[Worker1] Start importing Assets/a.png using Guid(02) Importer(1,2) \n",
+            "2026-11-05T17:12:30.000Z|0x2|[Worker1]  -> (artifact id: 'aa') in 0.1 seconds\n",
+        ));
+        let stopped = doc.unfinished().unwrap();
+        assert_eq!(stopped.running_for, Some(Duration::from_secs(750)));
+        let verdict = comte_core::Insights::of(&doc).verdict;
+        assert!(
+            verdict.details[0].contains("still not finished 12 min 30 s later"),
+            "{verdict:?}"
+        );
+    }
+
+    #[test]
+    fn two_editors_in_one_log_are_noticed() {
+        let doc = parse(concat!(
+            "Built from '6000.3/staging' branch; Version is '6000.3.11f1 (3000ef702840) revision 3145967'\n",
+            "Successfully changed project path to: C:/Projects/Alpha\n",
+            "[Flow] boot\n",
+            "Built from '6000.3/staging' branch; Version is '6000.3.11f1 (3000ef702840) revision 3145967'\n",
+            "Successfully changed project path to: C:/Projects/Beta\n",
+        ));
+        let hint = &doc.hints()[0];
+        assert_eq!(hint.title, "Two Unity Editors wrote into this log at once");
+        assert_eq!(hint.line, 4);
+        assert!(hint.advice[1].contains("C:/Projects/Alpha, C:/Projects/Beta"));
+
+        let garbled = parse("ok\nbad \u{FFFD}\u{FFFD}\nworse \0\nmore \u{FFFD}\n");
+        assert_eq!(garbled.hints()[0].title, "3 lines of this log are garbled");
+        assert!(
+            parse("Built from 'x' branch\n[Flow] fine\n")
+                .hints()
+                .is_empty()
+        );
     }
 
     #[test]

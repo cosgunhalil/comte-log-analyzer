@@ -31,6 +31,8 @@ pub fn detect_file(path: impl AsRef<Path>) -> io::Result<Option<LogKind>> {
 /// - `Mono path[0] = '…/<Game>_Data/Managed'`
 pub fn detect_kind(first_lines: &[&str]) -> Option<LogKind> {
     for line in first_lines.iter().take(DETECT_LINES) {
+        // Logs written with `-timestamps` prefix every line.
+        let line = crate::common::split_timestamp(line).map_or(*line, |(_, rest)| rest);
         let line = line.trim();
         if is_player_marker(line) {
             return Some(LogKind::Player);
@@ -58,6 +60,22 @@ fn is_editor_marker(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timestamped_logs_are_detected() {
+        assert_eq!(
+            detect_kind(&[
+                "2022-11-29T17:39:41.361Z|0x3598|[Licensing::Module] Trying to connect to existing licensing client channel..."
+            ]),
+            Some(LogKind::Editor)
+        );
+        assert_eq!(
+            detect_kind(&[
+                "2024-01-02T10:00:00.000Z|0x1f|Initialize engine version: 2022.3.11f1 (d00248457e15)"
+            ]),
+            Some(LogKind::Player)
+        );
+    }
 
     #[test]
     fn detects_unity6_editor_log() {

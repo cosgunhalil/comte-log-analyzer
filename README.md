@@ -44,6 +44,10 @@ paste a short report into Jira or Slack.
   - also covered: a removed graphics device (with a note when an integrated
     GPU was used), a full disk, Package Manager, Gradle, IL2CPP and licensing
     failures
+- **Reads timestamped logs.** Logs written with `-timestamps` parse like
+  any other, and show each line's time (in your time zone) and how long
+  after the start it happened. It notices when two Editors wrote into the
+  same log.
 - **Points to the other logs.** Package Manager's `upm.log`, the import
   workers' logs, Gradle's build folder, the licensing client's log and
   Editor crash reports are found when they exist. They are offered right

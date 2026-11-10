@@ -269,6 +269,9 @@ pub struct LogEntry {
     /// "Entering play mode (#1)"). Summaries stay visible when engine chatter
     /// is hidden.
     pub summary: bool,
+    /// When it was logged, for logs with timestamps (milliseconds since the
+    /// Unix epoch, UTC). See [`parse_utc_millis`].
+    pub time: Option<i64>,
 }
 
 impl LogEntry {
@@ -290,6 +293,7 @@ impl LogEntry {
             source: None,
             fingerprint: 0,
             summary: false,
+            time: None,
         }
     }
 
@@ -607,6 +611,42 @@ impl Metric {
     }
 }
 
+/// `2022-04-26T08:59:29.580Z` → milliseconds since the Unix epoch (UTC).
+/// Fractions of any length are accepted; anything else is `None`.
+pub fn parse_utc_millis(text: &str) -> Option<i64> {
+    let text = text.strip_suffix('Z')?;
+    let (date, time) = text.split_once('T')?;
+    let mut d = date.split('-').map(|p| p.parse::<i64>().ok());
+    let (year, month, day) = (d.next()??, d.next()??, d.next()??);
+    let (hms, fraction) = time.split_once('.').unwrap_or((time, ""));
+    let mut t = hms.split(':').map(|p| p.parse::<i64>().ok());
+    let (hour, minute, second) = (t.next()??, t.next()??, t.next()??);
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+    let millis = match fraction.len() {
+        0 => 0,
+        _ => {
+            let digits: String = fraction.chars().chain("000".chars()).take(3).collect();
+            digits.parse::<i64>().ok()?
+        }
+    };
+    // Days from 1970-01-01 (Howard Hinnant's days_from_civil).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(((days * 24 + hour) * 60 + minute) * 60_000 + second * 1000 + millis)
+}
+
 /// Human-friendly duration: `850 ms`, `1.30 s`, `2 min 05 s`.
 pub fn format_duration(duration: Duration) -> String {
     let secs = duration.as_secs_f64();
@@ -628,6 +668,21 @@ pub fn format_duration(duration: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_utc_timestamps() {
+        assert_eq!(parse_utc_millis("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(
+            parse_utc_millis("2022-04-26T08:59:29.580Z"),
+            Some(1_650_963_569_580)
+        );
+        assert_eq!(
+            parse_utc_millis("2000-03-01T00:00:00.5Z"),
+            Some(951_868_800_500)
+        );
+        assert_eq!(parse_utc_millis("2022-04-26T08:59:29"), None, "needs the Z");
+        assert_eq!(parse_utc_millis("2022-13-26T08:59:29Z"), None);
+    }
 
     #[test]
     fn formats_durations_for_humans() {

@@ -233,6 +233,16 @@ Stack frame syntax differs between versions, so the parser accepts both forms:
 - A shutdown clears imports and closes sections, so anything still open at the end started after it. Player logs don't use this.
 - Live tail feeds the unfinished last line to a copy of the parser for each snapshot, so an import in progress shows up while nothing new is written. Entries and sections never start on that half line.
 
+**Timestamped logs** (`-timestamps` or `UNITY_EXT_LOGGING=1`) prefix every line with `2022-04-26T08:59:29.580Z|0x7f43819a4300|`, a UTC time and a thread id:
+- **Parsing:** detection and the parser strip the prefix (`common::split_timestamp`), so every rule works unchanged. A timestamped copy of the fixture parses to exactly the same entries, sections and metrics.
+- **Times:** each entry keeps its time as `LogEntry::time` (UTC milliseconds, from `comte_core::parse_utc_millis`; the core has no date library).
+- **Display:** rows get a local-time column, and the details show "Time 20:03:42.775 · 3 min 43 s after the log started".
+- **Stopped verdict:** it says how long the operation kept running ("still not finished 12 min 30 s later, at the log's last line").
+- **Player logs:** they have no `Date:` line, so the first stamp becomes their start time.
+- **Raw lines:** they keep the prefix, so copied lines stay exact.
+
+**Two Editors in one log:** with a shared log (the global `Editor.log`, or the same `-logFile`), two Editors' lines interleave. The parser notices a second `Built from …` header, a second project path, or three or more garbled lines (NUL or U+FFFD, from both writing at once). It then adds a hint that names the projects, warns that sections and timings can be wrong, and suggests a log per project or `-logFile`.
+
 **Known limit:** a `Debug.Log` message is the single line right above its stack trace. If a message has several lines, only its last line becomes the entry's message; the earlier lines become entries of their own.
 
 ### 4.2 Player.log

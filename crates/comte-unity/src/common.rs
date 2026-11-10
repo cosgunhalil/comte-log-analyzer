@@ -6,6 +6,12 @@ use comte_core::{Fact, FactKey, Metric, MetricKind, SourceRef};
 
 use crate::frames::display_path;
 
+// `-timestamps` / UNITY_EXT_LOGGING: `2022-04-26T08:59:29.580Z|0x7f43819a4300|message`
+// (UTC time, thread id, then the line as usual).
+regex!(
+    TIMESTAMPED =
+        r"^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\|0x[0-9a-fA-F]+\|(?P<rest>.*)$"
+);
 regex!(EXCEPTION_HEADER = r"^(?:[A-Za-z_]\w*\.)*\w*Exception(?::\s|$)");
 regex!(FILENAME = r"^\(Filename: (?P<path>.*?) Line: (?P<line>-?\d+)\)$");
 regex!(
@@ -14,6 +20,16 @@ regex!(
 regex!(GPU_ID_SUFFIX = r"\s*\(ID=0x[0-9a-fA-F]+\)\s*$");
 
 /// `NullReferenceException: …`, `System.IO.IOException: …`, `UnityConnectWebRequestException: …`
+/// Splits a timestamped line into its time (`2022-04-26T08:59:29.580Z`) and
+/// the line itself.
+pub fn split_timestamp(line: &str) -> Option<(&str, &str)> {
+    let c = TIMESTAMPED.captures(line)?;
+    Some((
+        c.name("ts")?.as_str(),
+        c.name("rest").map_or("", |m| m.as_str()),
+    ))
+}
+
 pub fn is_exception_header(line: &str) -> bool {
     EXCEPTION_HEADER.is_match(line)
 }
