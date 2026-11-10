@@ -82,6 +82,57 @@ pub fn build_report(
     }
 }
 
+/// A short plain-text summary for a bug report: what the log is, its
+/// verdict, problem counts and the environment (Unity version, OS, GPU, …).
+/// Redacted the same way as reports, since it's meant to be pasted elsewhere.
+pub fn system_summary(loaded: &Loaded, user_names: &[&str]) -> String {
+    let doc = &loaded.doc;
+    let verdict = &loaded.insights.verdict;
+    let mut lines = vec![format!("{} ({})", loaded.title, loaded.kind_label)];
+    let mut verdict_line = format!("Verdict: {}", verdict.headline);
+    if let Some(detail) = verdict.details.first() {
+        verdict_line.push_str(&format!(". {detail}"));
+    }
+    lines.push(verdict_line);
+    let c = doc.counts();
+    let mut problems = Vec::new();
+    for (count, singular, plural) in [
+        (c.crash, "crash", "crashes"),
+        (c.exception, "exception", "exceptions"),
+        (c.error, "error", "errors"),
+        (c.warning, "warning", "warnings"),
+    ] {
+        if count > 0 {
+            problems.push(format!(
+                "{count} {}",
+                if count == 1 { singular } else { plural }
+            ));
+        }
+    }
+    lines.push(format!(
+        "Problems: {}",
+        if problems.is_empty() {
+            "none".to_owned()
+        } else {
+            problems.join(", ")
+        }
+    ));
+    let mut seen = Vec::new();
+    for fact in doc.facts() {
+        if !seen.contains(&fact.key) {
+            seen.push(fact.key.clone());
+            lines.push(format!("{}: {}", fact.key.label(), fact.value));
+        }
+    }
+    lines.push(format!("Lines: {}", doc.line_count()));
+    let mut redactor = Redactor::for_lines(&loaded.raw, user_names);
+    lines
+        .iter()
+        .map(|line| redactor.redact_line(line).into_owned())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// `2026-11-09_14-05_Editor.md`
 pub fn report_file_name(title: &str, now: &chrono::DateTime<chrono::Local>) -> String {
     crate::save::default_file_name(title, now).replace(".log", ".md")
@@ -148,6 +199,23 @@ mod tests {
             &[],
         );
         assert!(!without.text.contains("Changes since"));
+    }
+
+    #[test]
+    fn system_summary_for_bug_reports_is_redacted() {
+        let loaded = fixture("player_session.log");
+        let summary = system_summary(&loaded, &[]);
+        let lines: Vec<&str> = summary.lines().collect();
+        assert_eq!(lines[0], "player_session.log (Unity Player)");
+        assert!(lines[1].starts_with("Verdict: Crashed in Scene #3. Last error before it:"));
+        assert_eq!(lines[2], "Problems: 1 crash, 3 exceptions, 1 warning");
+        assert!(lines.contains(&"Engine version: 2019.4.40f1"));
+        assert!(lines.contains(&"GPU: NVIDIA GeForce RTX 2070 Super"));
+        assert!(
+            lines.contains(&"Crash report: C:/Users/<user>/AppData/Local/Temp/Sample Studio/Sample Game/Crashes"),
+            "{summary}"
+        );
+        assert_eq!(lines.last(), Some(&"Lines: 90"));
     }
 
     #[test]

@@ -18,6 +18,8 @@ use crate::theme::{severity_color, severity_icon};
 pub enum Jump {
     Entry(u64),
     Section(u32),
+    /// Copy the plain-text summary (verdict, counts, environment).
+    CopySummary,
 }
 
 pub fn overview(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
@@ -83,7 +85,18 @@ pub fn overview(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
 
     let facts = current.doc.facts();
     if !facts.is_empty() {
-        heading(ui, "Environment");
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Environment").strong());
+            if ui
+                .small_button("📋 Copy summary")
+                .on_hover_text("Verdict, problem counts and environment as plain text for a bug report (redacted)")
+                .clicked()
+            {
+                jump = Some(Jump::CopySummary);
+            }
+        });
+        ui.add_space(2.0);
         egui::Grid::new("facts")
             .num_columns(2)
             .spacing([12.0, 4.0])

@@ -32,7 +32,9 @@ use crate::ide::{
 use crate::live::{LiveEvent, LiveTail};
 use crate::loader::{LoadEvent, Loaded, Loader};
 use crate::overview::{Jump, overview};
-use crate::report_export::{BuiltReport, ReportOptions, build_report, report_file_name};
+use crate::report_export::{
+    BuiltReport, ReportOptions, build_report, report_file_name, system_summary,
+};
 use crate::save::{
     self, ContentChoice, Prepared, SaveRequest, SessionFile, current_user_name, default_dir,
     default_file_name, discover_sessions, visible_lines,
@@ -540,6 +542,12 @@ impl ComteApp {
                 }
                 if self.dev.open_selected {
                     self.open_selected();
+                }
+                match (self.dev.copy.as_deref(), self.selected) {
+                    (Some("summary"), _) => self.copy_summary(ctx),
+                    (Some("lines"), Some(id)) => self.copy_entry(ctx, id, CopyWhat::Lines),
+                    (Some("message"), Some(id)) => self.copy_entry(ctx, id, CopyWhat::Message),
+                    _ => {}
                 }
                 if self.dev.report {
                     self.open_report_dialog();
@@ -1160,6 +1168,70 @@ impl ComteApp {
         }
     }
 
+    /// Copies an entry's original lines or its message to the clipboard.
+    fn copy_entry(&mut self, ctx: &egui::Context, id: u64, what: CopyWhat) {
+        let Some(current) = &self.current else {
+            return;
+        };
+        let Some(entry) = current.doc.entry(id) else {
+            return;
+        };
+        let (text, notice) = match what {
+            CopyWhat::Lines => {
+                let lines = current.raw_lines(entry.line_range.clone());
+                let last = entry.line_range.end.saturating_sub(1);
+                let notice = if lines.len() == 1 {
+                    format!("Copied line {}", entry.line_range.start)
+                } else {
+                    format!("Copied lines {}–{last}", entry.line_range.start)
+                };
+                (lines.join("\n"), notice)
+            }
+            CopyWhat::Message => (
+                comte_core::markup::plain(&entry.message),
+                "Copied the message".to_owned(),
+            ),
+        };
+        ctx.copy_text(text);
+        self.notice = Some((notice, Instant::now()));
+    }
+
+    /// Copies a redacted plain-text summary (verdict, counts, environment).
+    fn copy_summary(&mut self, ctx: &egui::Context) {
+        let Some(current) = &self.current else {
+            return;
+        };
+        let user = current_user_name();
+        let mut names: Vec<&str> = user.iter().map(String::as_str).collect();
+        names.extend(
+            self.extra_redactions
+                .split(',')
+                .map(str::trim)
+                .filter(|w| !w.is_empty()),
+        );
+        ctx.copy_text(system_summary(current, &names));
+        self.notice = Some((
+            "Copied the summary (redacted) to the clipboard".to_owned(),
+            Instant::now(),
+        ));
+    }
+
+    /// Selects the first or last entry row (Home / End).
+    fn select_edge(&mut self, last: bool) {
+        let entry_id = |row: &Row| match row {
+            Row::Entry { id, .. } => Some(*id),
+            Row::Section { .. } => None,
+        };
+        let target = if last {
+            self.rows.iter().rev().find_map(entry_id)
+        } else {
+            self.rows.iter().find_map(entry_id)
+        };
+        if target.is_some() {
+            self.select(target);
+        }
+    }
+
     fn select(&mut self, id: Option<u64>) {
         self.selected = id;
         self.scroll_to_selected = id.is_some();
@@ -1256,6 +1328,35 @@ impl ComteApp {
             }
         }
         if !typing {
+            let (errors, warnings, infos, home, end, copy) = ctx.input_mut(|i| {
+                (
+                    i.consume_key(Modifiers::NONE, Key::Num1),
+                    i.consume_key(Modifiers::NONE, Key::Num2),
+                    i.consume_key(Modifiers::NONE, Key::Num3),
+                    i.consume_key(Modifiers::NONE, Key::Home),
+                    i.consume_key(Modifiers::NONE, Key::End),
+                    i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::C),
+                )
+            });
+            // 1 / 2 / 3 toggle the severity buttons, in their on-screen order.
+            if errors {
+                self.filter.show_errors = !self.filter.show_errors;
+            }
+            if warnings {
+                self.filter.show_warnings = !self.filter.show_warnings;
+            }
+            if infos {
+                self.filter.show_info = !self.filter.show_info;
+            }
+            if home {
+                self.select_edge(false);
+            }
+            if end {
+                self.select_edge(true);
+            }
+            if copy && let Some(id) = self.selected {
+                self.copy_entry(ctx, id, CopyWhat::Lines);
+            }
             if down {
                 self.step_selection(true);
             }
@@ -1608,30 +1709,33 @@ impl ComteApp {
             }
             ui.separator();
             let visuals = ui.visuals().clone();
-            for (flag, severity, count, tip) in [
+            for (flag, severity, count, tip, key) in [
                 (
                     &mut self.filter.show_errors,
                     Severity::Error,
                     counts.errors(),
                     "errors, exceptions and crashes",
+                    1,
                 ),
                 (
                     &mut self.filter.show_warnings,
                     Severity::Warning,
                     counts.warning,
                     "warnings",
+                    2,
                 ),
                 (
                     &mut self.filter.show_info,
                     Severity::Info,
                     counts.info,
                     "info messages",
+                    3,
                 ),
             ] {
                 let text = RichText::new(format!("{} {count}", severity_icon(severity)))
                     .color(severity_color(&visuals, severity));
                 ui.toggle_value(flag, text)
-                    .on_hover_text(format!("Show {tip}"));
+                    .on_hover_text(format!("Show {tip} ({key})"));
             }
             ui.separator();
             ui.checkbox(&mut self.filter.collapse_duplicates, "Collapse duplicates")
@@ -1683,6 +1787,7 @@ impl ComteApp {
 
         let mut clicked_entry: Option<u64> = None;
         let mut double_clicked: Option<u64> = None;
+        let mut menu_action: Option<(u64, RowAction)> = None;
         let mut toggled_section: Option<u32> = None;
         let selected = self.selected;
         let selected_fingerprint = selected
@@ -1741,6 +1846,21 @@ impl ComteApp {
                         if response.clicked() {
                             clicked_entry = Some(id);
                         }
+                        response.context_menu(|ui| {
+                            if ui.button("📋 Copy lines").clicked() {
+                                menu_action = Some((id, RowAction::Copy(CopyWhat::Lines)));
+                                ui.close();
+                            }
+                            if ui.button("Copy message").clicked() {
+                                menu_action = Some((id, RowAction::Copy(CopyWhat::Message)));
+                                ui.close();
+                            }
+                            if entry.culprit().is_some() && ui.button("↗ Open in editor").clicked()
+                            {
+                                menu_action = Some((id, RowAction::Open));
+                                ui.close();
+                            }
+                        });
                     }
                 }
             }
@@ -1758,6 +1878,17 @@ impl ComteApp {
         if let Some(id) = double_clicked {
             self.selected = Some(id);
             self.open_selected();
+        }
+        match menu_action {
+            Some((id, RowAction::Copy(what))) => {
+                self.selected = Some(id);
+                self.copy_entry(ui.ctx(), id, what);
+            }
+            Some((id, RowAction::Open)) => {
+                self.selected = Some(id);
+                self.open_selected();
+            }
+            None => {}
         }
     }
 
@@ -1782,6 +1913,7 @@ impl ComteApp {
         let mut jump = None;
         let mut back = false;
         let mut open: Option<comte_core::SourceRef> = None;
+        let mut copy: Option<(u64, CopyWhat)> = None;
         let links = Links {
             query: self.query.clone(),
             rich: self.settings.render_rich_text,
@@ -1811,7 +1943,9 @@ impl ComteApp {
                             back = true;
                         }
                         ui.add_space(4.0);
-                        open = entry_details(ui, current, entry, repeats, &links);
+                        let outcome = entry_details(ui, current, entry, repeats, &links);
+                        open = outcome.open;
+                        copy = outcome.copy.map(|what| (entry.id, what));
                     }
                     None => jump = overview(ui, current),
                 }
@@ -1822,9 +1956,13 @@ impl ComteApp {
         if let Some(location) = open {
             self.open_location(&location);
         }
+        if let Some((id, what)) = copy {
+            self.copy_entry(ui.ctx(), id, what);
+        }
         match jump {
             Some(Jump::Entry(id)) => self.reveal(id),
             Some(Jump::Section(id)) => self.reveal_section(id),
+            Some(Jump::CopySummary) => self.copy_summary(ui.ctx()),
             None => {}
         }
     }
@@ -2143,13 +2281,30 @@ impl Links {
 }
 
 /// Entry details. Returns a source location the user asked to open.
+/// What the user asked for in the details panel.
+#[derive(Default)]
+struct DetailsOutcome {
+    open: Option<comte_core::SourceRef>,
+    copy: Option<CopyWhat>,
+}
+
+/// Copy actions on an entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CopyWhat {
+    /// The entry's original lines, exactly as in the log.
+    Lines,
+    /// The message without rich-text tags.
+    Message,
+}
+
 fn entry_details(
     ui: &mut Ui,
     current: &Loaded,
     entry: &LogEntry,
     repeats: u32,
     links: &Links,
-) -> Option<comte_core::SourceRef> {
+) -> DetailsOutcome {
+    let mut copy = None;
     let mut open = None;
     let color = severity_color(ui.visuals(), entry.severity);
     ui.horizontal(|ui| {
@@ -2172,15 +2327,31 @@ fn entry_details(
     message.wrap.max_width = ui.available_width();
     let ranges = links.query.ranges(&message.text);
     ui.label(highlight(message, &ranges, highlight_color(ui.visuals())));
-    if let Some(culprit) = entry.culprit()
-        && resolve_source(&culprit.path, &links.roots).is_some()
-        && ui
-            .button(format!("↗ Open {} in {}", culprit.short(), links.ide))
-            .on_hover_text("Ctrl+E, or double-click the entry")
+    ui.horizontal_wrapped(|ui| {
+        if let Some(culprit) = entry.culprit()
+            && resolve_source(&culprit.path, &links.roots).is_some()
+            && ui
+                .button(format!("↗ Open {} in {}", culprit.short(), links.ide))
+                .on_hover_text("Ctrl+E, or double-click the entry")
+                .clicked()
+        {
+            open = Some(culprit.clone());
+        }
+        if ui
+            .button("📋 Copy lines")
+            .on_hover_text("The entry's original lines, exactly as in the log (Ctrl+Shift+C)")
             .clicked()
-    {
-        open = Some(culprit.clone());
-    }
+        {
+            copy = Some(CopyWhat::Lines);
+        }
+        if ui
+            .button("Copy message")
+            .on_hover_text("Just the message, without rich-text tags")
+            .clicked()
+        {
+            copy = Some(CopyWhat::Message);
+        }
+    });
     if repeats > 1 {
         ui.label(RichText::new(format!("Repeated {repeats} times in this section")).weak());
     }
@@ -2259,7 +2430,7 @@ fn entry_details(
                 }
             });
         });
-    open
+    DetailsOutcome { open, copy }
 }
 
 /// User frames in bold; runs of engine/package frames folded. Locations of
@@ -2381,4 +2552,11 @@ fn searched_label(
     job.wrap.max_width = ui.available_width();
     let ranges = query.ranges(text);
     ui.label(highlight(job, &ranges, highlight_color(ui.visuals())))
+}
+
+/// Actions from an entry row's right-click menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowAction {
+    Copy(CopyWhat),
+    Open,
 }

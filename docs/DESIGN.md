@@ -432,8 +432,15 @@ A short report to paste into Jira, Slack or a pull request, built by `comte-core
 - Keyboard:
   - `Ctrl+F` search; `Enter` / `Shift+Enter` or `F3` / `Shift+F3` for the next or previous match; `Esc` in the search box clears it.
   - `F8` / `Shift+F8` next or previous problem (this opens collapsed sections).
-  - `↑` / `↓` move the selection, `Esc` clears it.
+  - `↑` / `↓` move the selection, `Home` / `End` jump to the first or last entry, `Esc` clears it.
+  - `1` / `2` / `3` toggle the errors / warnings / info buttons, in their on-screen order (only while no text box has focus).
+  - `Ctrl+Shift+C` copies the selected entry's original lines. Plain `Ctrl+C` is left for copying text you've selected in the details.
   - `F5` reloads, `Ctrl+O` opens a file, `Ctrl+S` saves the session (M6).
+- **Copying:**
+  - The details panel has **📋 Copy lines** (the original lines, exactly as in the log) and **Copy message** (without rich-text tags).
+  - Right-clicking a row offers the same, plus "Open in editor".
+  - The overview's **📋 Copy summary** copies the log's title, verdict, problem counts, environment facts and line count as plain text for a bug report, redacted like reports.
+  - The status bar confirms what was copied. `COMTE_COPY=summary|lines|message` triggers a copy for automated checks.
 - **Search** (`comte-app::search`):
   - **Words:** every word must appear somewhere in the entry (message without rich-text tags, details, stack frames, `file:line`), in any field and any order. `"a phrase"` keeps words together and in order, and `-word` / `-"a phrase"` excludes.
   - **Toggles:** **Aa** matches case, **.*** treats the whole text as one regular expression, and **▽** switches between hiding entries that don't match (the default) and only highlighting matches.

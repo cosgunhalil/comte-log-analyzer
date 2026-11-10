@@ -44,6 +44,9 @@ paste a short report into Jira or Slack.
   slower since the previous run.
 - **Writes reports.** ⇪ Report creates a short Markdown or Slack summary to
   copy or save.
+- **Copies what you need.** Copy an entry's original lines or its message (in
+  the details or by right-clicking a row), or a redacted summary of the log
+  and its environment for a bug report.
 
 ![Details of an exception with links into the project](docs/images/details.png)
 
@@ -93,6 +96,9 @@ comte --report path/to/Player.log --slack
 | Keys | Action |
 |---|---|
 | F8 / Shift+F8 | Next / previous warning or error |
+| 1 / 2 / 3 | Show or hide errors / warnings / info |
+| Home / End | First / last entry |
+| Ctrl+Shift+C | Copy the selected entry's original lines |
 | ↑ / ↓, Esc | Move / clear the selection |
 | Ctrl+F | Search messages, files and stack frames |
 | Enter / Shift+Enter, F3 / Shift+F3 | Next / previous search match |
