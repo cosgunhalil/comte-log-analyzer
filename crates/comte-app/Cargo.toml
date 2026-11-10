@@ -1,6 +1,6 @@
 [package]
 name = "comte-app"
-description = "Comte Logger desktop application."
+description = "Comte Log Analyzer desktop application."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,7 @@ path = "src/lib.rs"
 
 # The desktop app (a GUI program on Windows: no console window).
 [[bin]]
-name = "comte-logger"
+name = "comte-log-analyzer"
 path = "src/main.rs"
 
 # The command line.

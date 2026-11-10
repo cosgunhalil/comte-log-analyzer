@@ -1,6 +1,6 @@
 [package]
 name = "comte-unity"
-description = "Unity Editor and Player log support for Comte Logger."
+description = "Unity Editor and Player log support for Comte Log Analyzer."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

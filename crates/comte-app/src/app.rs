@@ -1,4 +1,4 @@
-//! The Comte Logger window (DESIGN §9).
+//! The Comte Log Analyzer window (DESIGN §9).
 //!
 //! ```text
 //! ┌ toolbar ─────────────────────────────────────────────────────────┐
@@ -147,6 +147,7 @@ const NOTICE_SECONDS: u64 = 8;
 impl ComteApp {
     pub fn new(cc: &eframe::CreationContext<'_>, open: Option<PathBuf>) -> Self {
         let dev = DevHooks::from_env();
+        crate::settings::migrate_old_folders();
         let settings = Settings::load();
         apply_theme(&cc.egui_ctx, settings.theme);
         let mut filter = Filter {
@@ -632,7 +633,7 @@ impl ComteApp {
         match event {
             LoadEvent::Done(loaded) => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-                    "Comte Logger — {}",
+                    "Comte Log Analyzer — {}",
                     loaded.title
                 )));
                 self.collapsed = default_collapsed(&loaded.doc);
@@ -1332,7 +1333,7 @@ impl ComteApp {
     fn show_loaded(&mut self, loaded: Box<Loaded>, ctx: &egui::Context) {
         self.stop_live();
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-            "Comte Logger — {}",
+            "Comte Log Analyzer — {}",
             loaded.title
         )));
         self.collapsed = default_collapsed(&loaded.doc);
@@ -1406,7 +1407,7 @@ impl ComteApp {
     }
 
     /// Opens a source location from the log in the chosen editor.
-    /// Opens a companion: a log in Comte Logger, a folder in the file manager.
+    /// Opens a companion: a log in Comte Log Analyzer, a folder in the file manager.
     fn open_companion(&mut self, index: usize, ctx: &egui::Context) {
         let Some(companion) = self
             .current
@@ -1637,7 +1638,8 @@ impl ComteApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(format!("Comte Logger {}", env!("CARGO_PKG_VERSION"))).weak(),
+                        RichText::new(format!("Comte Log Analyzer {}", env!("CARGO_PKG_VERSION")))
+                            .weak(),
                     );
                     if let Some(path) = Settings::path() {
                         ui.label(
@@ -1912,7 +1914,7 @@ impl ComteApp {
 
     fn toolbar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Comte Logger").strong().size(16.0));
+            ui.label(RichText::new("Comte Log Analyzer").strong().size(16.0));
             ui.separator();
             if ui
                 .button("📂 Open…")
@@ -2604,7 +2606,7 @@ impl ComteApp {
     fn empty_state(&self, ui: &mut Ui) {
         ui.add_space(80.0);
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("Comte Logger").size(28.0).strong());
+            ui.label(RichText::new("Comte Log Analyzer").size(28.0).strong());
             ui.label(RichText::new("« Savoir pour prévoir »").italics().weak());
             ui.add_space(16.0);
             if self.loader.pending().is_some() {
@@ -3394,7 +3396,7 @@ fn file_title(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-/// `Documents\ComteLogger\sessions`, or the folder chosen in settings.
+/// `Documents\ComteLogAnalyzer\sessions`, or the folder chosen in settings.
 fn sessions_dir(settings: &Settings) -> PathBuf {
     settings.sessions_dir.clone().unwrap_or_else(default_dir)
 }

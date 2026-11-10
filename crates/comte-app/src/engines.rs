@@ -1,4 +1,4 @@
-//! The engines Comte Logger understands.
+//! The engines Comte Log Analyzer understands.
 
 use comte_core::{EngineSupport, LogSource};
 use comte_unity::UnitySupport;

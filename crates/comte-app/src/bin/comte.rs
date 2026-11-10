@@ -1,7 +1,7 @@
-//! `comte`: the Comte Logger command line.
+//! `comte`: the Comte Log Analyzer command line.
 //!
 //! `comte --list`, `--summary <file>`, `--compare <A> <B>`, `--report <file>`.
-//! The desktop app is the separate `comte-logger` program.
+//! The desktop app is the separate `comte-log-analyzer` program.
 
 use std::process::ExitCode;
 

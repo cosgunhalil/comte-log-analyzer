@@ -1,5 +1,5 @@
 //! Settings kept between runs, in `settings.toml` under the user's config
-//! folder (`%APPDATA%\ComteLogger\config` on Windows). Edited in the
+//! folder (`%APPDATA%\ComteLogAnalyzer\config` on Windows). Edited in the
 //! Settings window (⚙ in the toolbar).
 
 use std::path::PathBuf;
@@ -40,7 +40,7 @@ pub struct Settings {
     /// Words always redacted in sessions and reports (comma-separated),
     /// e.g. a display name the redaction rules can't recognize.
     pub also_redact: String,
-    /// Where sessions are saved; `None` = `Documents\ComteLogger\sessions`.
+    /// Where sessions are saved; `None` = `Documents\ComteLogAnalyzer\sessions`.
     pub sessions_dir: Option<PathBuf>,
     /// Starting value of "Collapse duplicates".
     pub collapse_duplicates: bool,
@@ -73,21 +73,75 @@ impl Default for Settings {
     }
 }
 
+/// Folder name before the app was renamed (Comte Logger).
+const OLD_FOLDER: &str = "ComteLogger";
+const FOLDER: &str = "ComteLogAnalyzer";
+
+/// Moves `old` to `new` if `new` doesn't exist yet. Returns whether it moved.
+fn move_folder(old: &std::path::Path, new: &std::path::Path) -> bool {
+    if !old.is_dir() || new.exists() {
+        return false;
+    }
+    if let Some(parent) = new.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::rename(old, new).is_ok()
+}
+
+/// Moves settings, timing history, saved sessions and reports from the
+/// folders of the app's old name to the new ones, once (when the new ones
+/// don't exist yet). Nothing happens in dev runs with `COMTE_SETTINGS`.
+pub fn migrate_old_folders() {
+    if std::env::var_os("COMTE_SETTINGS").is_some() {
+        return;
+    }
+    if let (Some(old), Some(new)) = (
+        directories::ProjectDirs::from("", "", OLD_FOLDER),
+        directories::ProjectDirs::from("", "", FOLDER),
+    ) && move_folder(old.config_dir(), new.config_dir())
+    {
+        // `…\ComteLogger\config` moved; drop the now empty `ComteLogger`.
+        if let Some(parent) = old.config_dir().parent() {
+            let _ = std::fs::remove_dir(parent);
+        }
+    }
+    if let Some(docs) =
+        directories::UserDirs::new().and_then(|d| d.document_dir().map(PathBuf::from))
+    {
+        move_folder(&docs.join(OLD_FOLDER), &docs.join(FOLDER));
+    }
+}
+
+/// A path inside the old Documents folder, pointed at the new one.
+fn renamed(path: PathBuf) -> PathBuf {
+    let Some(docs) = directories::UserDirs::new().and_then(|d| d.document_dir().map(PathBuf::from))
+    else {
+        return path;
+    };
+    match path.strip_prefix(docs.join(OLD_FOLDER)) {
+        Ok(rest) if !path.exists() => docs.join(FOLDER).join(rest),
+        _ => path,
+    }
+}
+
 impl Settings {
     pub fn path() -> Option<PathBuf> {
         if let Some(path) = std::env::var_os("COMTE_SETTINGS") {
             return Some(PathBuf::from(path)); // tests and dev runs
         }
-        directories::ProjectDirs::from("", "", "ComteLogger")
+        directories::ProjectDirs::from("", "", FOLDER)
             .map(|dirs| dirs.config_dir().join("settings.toml"))
     }
 
     /// Saved settings, or defaults when there are none or they can't be read.
     pub fn load() -> Self {
-        Self::path()
+        let mut settings: Self = Self::path()
             .and_then(|path| std::fs::read_to_string(path).ok())
             .and_then(|text| toml::from_str(&text).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // A sessions folder chosen inside the old Documents folder moved with it.
+        settings.sessions_dir = settings.sessions_dir.map(renamed);
+        settings
     }
 
     pub fn save(&self) -> std::io::Result<()> {

@@ -1,8 +1,8 @@
-# Comte Logger — Application Design
+# Comte Log Analyzer — Application Design
 
 > *"Savoir pour prévoir"* — Auguste Comte. Know the log so you can predict the bug.
 
-Comte Logger is a Windows desktop log analyzer for game engines, written in Rust.
+Comte Log Analyzer is a Windows desktop log analyzer for game engines, written in Rust.
 **v1 targets Unity**. The architecture leaves room for Unreal and Godot later.
 
 **Main goal:** turn noisy Unity logs (mainly the Editor log, plus Player logs) into something a person can read, then save and share them with notes.
@@ -53,7 +53,7 @@ Comte Logger is a Windows desktop log analyzer for game engines, written in Rust
   | `Unity.Licensing.Client.log` | `%LOCALAPPDATA%\Unity\` (`~/Library/Logs/Unity/` on macOS) | `licensing` |
   | Editor crash reports | `%TEMP%\Unity\Editor\Crashes` | `crash` |
 
-  - Each `Hint` has a topic: the rule id, or `crash` / `licensing`. A hint card offers the companions of its topic (📄 opens a log in Comte Logger, 📂 opens a folder).
+  - Each `Hint` has a topic: the rule id, or `crash` / `licensing`. A hint card offers the companions of its topic (📄 opens a log in Comte Log Analyzer, 📂 opens a folder).
   - A stuck-import verdict offers the worker logs.
   - The overview lists them all under **Related logs**.
 
@@ -70,7 +70,7 @@ comte-log-analyzer/
 │   ├── comte-core/               # model, traits, sections, filters, redaction,
 │   │                             # session save/load, Markdown export, diff
 │   ├── comte-unity/              # Unity locator + Editor parser + Player parser
-│   └── comte-app/                # egui GUI → binary "comte-logger"
+│   └── comte-app/                # egui GUI → binary "comte-log-analyzer"
 ├── docs/
 └── crates/comte-unity/tests/fixtures/   # small, redacted samples
 ```
@@ -277,7 +277,7 @@ Checked against 30 real Player logs (Unity 2019.4 to 6000.x builds): every file 
 - The **culprit** is the first user frame. It appears on the entry row as `GameInstaller.cs:84`.
 
 ### 4.4 Unity rich text in messages
-Games often style their own logs, e.g. `Debug.Log("<color='cyan'>Starting new race</color>")`. Unity's console shows that in color; the log file keeps the tags. Comte Logger renders it like the console does (`comte-core::markup`):
+Games often style their own logs, e.g. `Debug.Log("<color='cyan'>Starting new race</color>")`. Unity's console shows that in color; the log file keeps the tags. Comte Log Analyzer renders it like the console does (`comte-core::markup`):
 
 - **Tags:**
   - `<color=…>` accepts named colors (`cyan`, `red`, `lightblue`, …), `#RGB`, `#RGBA`, `#RRGGBB` and `#RRGGBBAA`, unquoted or in `'single'` or `"double"` quotes.
@@ -340,7 +340,7 @@ Original plan:
 ### 6.1 Saved session (`.log`)
 
 ```
-# ==== Comte Logger session ====================================
+# ==== Comte Log Analyzer session ====================================
 # comte_version: 0.1.0
 # source:        Player.log (Flanne/MinutesTillDawn)
 # kind:          unity-player
@@ -360,13 +360,13 @@ Original plan:
 ```
 
 - **Content**: the full log, or only the entries you can currently see (written as their original lines, so the file is still a valid log).
-- Comte Logger reads the header back when you reopen the file, restoring the note, tags and kind (no detection needed). Line numbers in a reopened session count from the first log line after the header.
+- Comte Log Analyzer reads the header back when you reopen the file, restoring the note, tags and kind (no detection needed). Line numbers in a reopened session count from the first log line after the header.
 - Note lines are written as `# > text`, so a note can never end the header early. The header also records `source_path`, which is redacted too.
 - **Pins** are written as `# @ <line>  <note>`, with line numbers counted in the saved body. In a filtered save they are renumbered to the saved lines, and pins on left-out lines are dropped. Pin notes are redacted like everything else. Reopening the file restores the pins and their notes.
-- Default folder: `Documents\ComteLogger\sessions\<yyyy-MM-dd_HH-mm>_<title>.log`. `Documents` comes from the Windows known-folder API, so OneDrive redirection works. A different folder can be chosen in Settings (M12).
+- Default folder: `Documents\ComteLogAnalyzer\sessions\<yyyy-MM-dd_HH-mm>_<title>.log`. `Documents` comes from the Windows known-folder API, so OneDrive redirection works. A different folder can be chosen in Settings (M12).
 - **Save dialog** (toolbar or Ctrl+S): note, tags, whole log or only the entries matching the current filters, Redact on or off, an "Also redact" field for your own words, and a live preview ("106 values will be replaced: 89 user names, 5 tokens, …").
 - The left panel lists the sessions saved in the default folder, with their tags and the note's first line as a tooltip. A reopened session shows a card with its note, tags, origin and redaction status. Saving it again keeps the note and tags.
-- `comte-logger --summary <file>` uses the same loader, so it understands sessions too.
+- `comte-log-analyzer --summary <file>` uses the same loader, so it understands sessions too.
 
 ### 6.2 Redaction (on by default)
 The real logs on this machine contain values that must not be shared:
@@ -395,7 +395,7 @@ Names found in identity fields and `-epicusername=` are also masked wherever the
 The rules live in `comte-core::redact` and are tested against real log lines. An opt-in test (`COMTE_REAL_LOG=<file> cargo test -p comte-app -- --ignored`) checks that a real log has no trace of the user left after redaction. All 28 local logs pass except one: Terraforming Mars logs the Epic display name as unlabeled free text. That case is what "Also redact" is for, because no rule can safely guess an unlabeled name.
 
 ### 6.3 Markdown report export
-A short report to paste into Jira, Slack or a pull request, built by `comte-core::report::render_report` and opened from **⇪ Report…** in the toolbar. The CLI equivalent is `comte-logger --report <file> [--slack] [--no-redact]`.
+A short report to paste into Jira, Slack or a pull request, built by `comte-core::report::render_report` and opened from **⇪ Report…** in the toolbar. The CLI equivalent is `comte-log-analyzer --report <file> [--slack] [--no-redact]`.
 
 - **Content, in order:**
   1. Title and meta line (kind, Unity version, lines, when it was generated).
@@ -413,7 +413,7 @@ A short report to paste into Jira, Slack or a pull request, built by `comte-core
 - **Safe formatting:** log text always goes into code spans or code blocks (with double backticks when it contains a backtick), and table cells escape `|`.
 - **Crashes:** a native crash's detail lines (symbol-loader output with local paths) are left out; only its stack is shown.
 - **Headlines:** specific exceptions show their type (`NullReferenceException`). A bare `System.Exception` keeps its message, because the type alone says nothing.
-- **Dialog:** style, how many problems, note and tags (prefilled from a reopened session), Redact plus "Also redact" (shared with the save dialog), a live monospace preview, **Copy** (to the clipboard) and **Save .md…** (`Documents\ComteLogger\reports`).
+- **Dialog:** style, how many problems, note and tags (prefilled from a reopened session), Redact plus "Also redact" (shared with the save dialog), a live monospace preview, **Copy** (to the clipboard) and **Save .md…** (`Documents\ComteLogAnalyzer\reports`).
 - **Redaction:** the same rules as sessions. User names are learned from the whole log, then the report is masked line by line.
 - **Tests:** snapshots of full reports (Player in Markdown and Slack, Editor in Markdown).
 
@@ -451,7 +451,7 @@ A short report to paste into Jira, Slack or a pull request, built by `comte-core
 - **Timings:** average per kind, A vs B, with the change in %. Red means a **regression**: more than 25 % *and* more than 100 ms slower. Green means the same amount faster. Smaller moves are treated as noise.
 - **Environment changes:** facts whose values differ (Unity version, GPU driver, project, …). The start date is skipped because it always differs.
 - **In the app:** the ⇄ Compare button replaces the list with the report. A can be picked from the found logs, saved sessions, or Browse. Swap reverses the direction; Close or Esc goes back. The report recomputes when B changes, including live updates.
-- **CLI:** `comte-logger --compare <A> <B>` prints the same report.
+- **CLI:** `comte-log-analyzer --compare <A> <B>` prints the same report.
 - **On this machine:** `Editor-prev.log` → `Editor.log` shows a MissingReferenceException fixed in `SpreadView.cs:75`, a new one in `TurnView.cs:98`, and a script recompile mid-session that made compile, reload and refresh times slower.
 
 ---
@@ -479,7 +479,8 @@ A short report to paste into Jira, Slack or a pull request, built by `comte-core
   | Visual Studio | `devenv.exe /edit file /command "Edit.GoTo N"` |
 
   `.cmd`/`.bat` launchers run through `cmd /C` without a console window.
-- **Settings file:** `%APPDATA%\ComteLogger\config\settings.toml` (serde + toml). `COMTE_SETTINGS` overrides the path for tests.
+- **Settings file:** `%APPDATA%\ComteLogAnalyzer\config\settings.toml` (serde + toml). `COMTE_SETTINGS` overrides the path for tests.
+- **Renamed from Comte Logger:** on its first start the app moves `%APPDATA%\ComteLogger\config` (settings, `timings.toml`) and `Documents\ComteLogger` (sessions, reports) to the `ComteLogAnalyzer` folders, unless those already exist. A sessions folder chosen inside the old Documents folder is re-pointed. Session files saved with the old `# ==== Comte Logger session` header still open.
 - **Verification:** a dry run (`COMTE_IDE_DRY_RUN=1`) on the real Editor log produced `rider64.exe --line 98 …\Spirit Cabinet\Assets\SpiritCabinet\Scripts\UI\TurnView.cs`. A real launch through a harmless custom command passed the right `file:line`.
 - Release Player frames rarely have a path, so they are not links (the culprit label still shows the frame name).
 
@@ -489,7 +490,7 @@ A short report to paste into Jira, Slack or a pull request, built by `comte-core
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ Comte Logger  [Source ▾ Editor.log] [⟳] [● Live] [⇄ Compare] [💾 Save] [⇪ MD] │
+│ Comte Log Analyzer  [Source ▾ Editor.log] [⟳] [● Live] [⇄ Compare] [💾 Save] [⇪ MD] │
 ├───────────────┬───────────────────────────────────────────┬──────────────────┤
 │ SOURCES       │ 🔍 search…  [⛔3][⚠12][ℹ240] ☐Collapse ☐Noise │ INSIGHTS ▾        │
 │ Unity Editor  │───────────────────────────────────────────│ ✅ 3 errors,      │
@@ -605,7 +606,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 | M12 | Polish: settings UI, icon, release build | `cargo build --release` gives a working `.exe` ✅ |
 
 **M12 details:**
-- **Two programs:** `comte-logger.exe` is a GUI program (Windows subsystem 2, no console window), and `comte.exe` is the command line (subsystem 3). Both are thin `main`s over the `comte_app` library.
+- **Two programs:** `comte-log-analyzer.exe` is a GUI program (Windows subsystem 2, no console window), and `comte.exe` is the command line (subsystem 3). Both are thin `main`s over the `comte_app` library.
 - **Icon:** drawn in code (`src/icon_art.rs`) as an indigo tile with four "log lines" whose dots are gray, gray, amber and red. It is the window icon at 64 px, and `build.rs` embeds it into both exes at 16–256 px along with version info. Without a resource compiler (e.g. the GNU toolchain), the build only warns.
 - **Settings window (⚙):**
   - Code editor, Unity project folder and saved-sessions folder.
@@ -615,7 +616,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 
   Everything is stored in `settings.toml` and written only when something changes.
 - **README** with screenshots taken from the sanitized fixtures in a neutral folder, using the `COMTE_NO_DISCOVERY` hook, so no personal paths or installed games appear.
-- **Release build:** `comte-logger.exe` 16.9 MB (mostly the wgpu renderer), `comte.exe` 2.1 MB.
+- **Release build:** `comte-log-analyzer.exe` 16.9 MB (mostly the wgpu renderer), `comte.exe` 2.1 MB.
 
 ---
 

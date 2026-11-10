@@ -1,10 +1,10 @@
 <img src="docs/images/icon.png" width="72" align="right" alt="">
 
-# Comte Logger
+# Comte Log Analyzer
 
 *« Savoir pour prévoir »* (Auguste Comte): know the log so you can predict the bug.
 
-Comte Logger is a Windows desktop app that turns Unity's noisy `Editor.log` and
+Comte Log Analyzer is a Windows desktop app that turns Unity's noisy `Editor.log` and
 `Player.log` into something a person can read. It shows a timeline of what
 happened, which problems occurred and how often, and where in your code they
 started. You can save a log with a note to share it, compare two runs, and
@@ -99,7 +99,7 @@ paste a short report into Jira or Slack.
 You need [Rust](https://rustup.rs/) 1.88 or newer on Windows (MSVC toolchain).
 
 ```bash
-cargo run --release -p comte-app --bin comte-logger
+cargo run --release -p comte-app --bin comte-log-analyzer
 ```
 
 Or build once and use the executables in `target/release`:
@@ -110,7 +110,7 @@ cargo build --release
 
 | Program | What it is |
 |---|---|
-| `comte-logger.exe [log file]` | The desktop app. With no file, it opens your Unity `Editor.log`. |
+| `comte-log-analyzer.exe [log file]` | The desktop app. With no file, it opens your Unity `Editor.log`. |
 | `comte.exe` | The command line, described below. |
 
 ### Command line
@@ -162,7 +162,7 @@ comte --report path/to/Player.log --slack
 - what a newly opened log shows,
 - light or dark mode.
 
-Settings are stored in `%APPDATA%\ComteLogger\config\settings.toml`.
+Settings are stored in `%APPDATA%\ComteLogAnalyzer\config\settings.toml`.
 
 ## Project layout
 
@@ -189,7 +189,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 - **Visual checks:** the app can screenshot itself in a given state. See `crates/comte-app/src/devtools.rs` for the `COMTE_*` variables. For example:
 
   ```bash
-  COMTE_SELECT=problem COMTE_SCREENSHOT=shot.png cargo run -p comte-app --bin comte-logger -- crates/comte-unity/tests/fixtures/player_session.log
+  COMTE_SELECT=problem COMTE_SCREENSHOT=shot.png cargo run -p comte-app --bin comte-log-analyzer -- crates/comte-unity/tests/fixtures/player_session.log
   ```
 
 - **Redaction check:** `COMTE_REAL_LOG=<a real log> cargo test -p comte-app -- --ignored` checks that no trace of your user name is left after redaction.

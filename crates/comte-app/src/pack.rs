@@ -240,7 +240,7 @@ pub fn build(
     }
 
     let mut summary = vec![
-        "Comte Logger support pack".to_owned(),
+        "Comte Log Analyzer support pack".to_owned(),
         format!("Made {}", now.format("%Y-%m-%d %H:%M")),
         String::new(),
     ];

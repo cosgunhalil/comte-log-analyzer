@@ -1,6 +1,6 @@
 //! # comte-core
 //!
-//! Engine-agnostic building blocks for Comte Logger:
+//! Engine-agnostic building blocks for Comte Log Analyzer:
 //!
 //! - [`model`]: entries, stack frames, timeline sections, facts and metrics.
 //! - [`parser`]: the streaming [`LogParser`] trait and the [`ParseEvent`]s it emits.

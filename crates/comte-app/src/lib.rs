@@ -1,7 +1,7 @@
-//! Comte Logger: a human-friendly log analyzer for game engines.
+//! Comte Log Analyzer: a human-friendly log analyzer for game engines.
 //!
 //! This library backs two programs:
-//! - `comte-logger` (`src/main.rs`): the desktop app. On Windows it is a GUI
+//! - `comte-log-analyzer` (`src/main.rs`): the desktop app. On Windows it is a GUI
 //!   program, so no console window opens next to it.
 //! - `comte` (`src/bin/comte.rs`): the command line (`--list`, `--summary`,
 //!   `--compare`, `--report`).
@@ -40,14 +40,14 @@ const USAGE: &str = "Usage:
   comte --report <log file> [--slack] [--no-redact]
                                     print a Markdown (or Slack) report
 
-The desktop app is comte-logger [log file].";
+The desktop app is comte-log-analyzer [log file].";
 
 /// Opens the desktop app, optionally with a log file.
 pub fn run_gui(open: Option<PathBuf>) -> ExitCode {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Comte Logger")
-            .with_app_id("comte-logger")
+            .with_title("Comte Log Analyzer")
+            .with_app_id("comte-log-analyzer")
             .with_icon(icon::window_icon())
             .with_inner_size([1440.0, 880.0])
             .with_min_inner_size([960.0, 540.0])
@@ -55,7 +55,7 @@ pub fn run_gui(open: Option<PathBuf>) -> ExitCode {
         ..Default::default()
     };
     let result = eframe::run_native(
-        "Comte Logger",
+        "Comte Log Analyzer",
         options,
         Box::new(move |cc| Ok(Box::new(app::ComteApp::new(cc, open)))),
     );
@@ -103,7 +103,7 @@ pub fn run_cli(args: &[std::ffi::OsString]) -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("--help" | "-h") | None => {
-            println!("Comte Logger {}\n{USAGE}", env!("CARGO_PKG_VERSION"));
+            println!("Comte Log Analyzer {}\n{USAGE}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         Some(other) => {

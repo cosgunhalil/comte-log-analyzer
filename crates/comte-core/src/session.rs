@@ -2,7 +2,7 @@
 //! commented header (source, note, tags, …) followed by original log lines.
 //!
 //! ```text
-//! # ==== Comte Logger session ====================================
+//! # ==== Comte Log Analyzer session ====================================
 //! # comte_version: 0.1.0
 //! # source:        Player.log (Flanne › MinutesTillDawn)
 //! # source_path:   C:\Users\<user>\AppData\LocalLow\Flanne\MinutesTillDawn\Player.log
@@ -20,7 +20,7 @@
 //! <original log lines>
 //! ```
 //!
-//! Any text editor can read it; Comte Logger reads the header back on open.
+//! Any text editor can read it; Comte Log Analyzer reads the header back on open.
 //! Note lines are prefixed with `# > ` so a note can never end the header early.
 //! Pins are `# @ <line>  <note>`, with line numbers counted in the body.
 
@@ -28,7 +28,9 @@ use std::io::{self, Write};
 
 use crate::source::{EngineId, LogKind};
 
-const OPENING: &str = "# ==== Comte Logger session ";
+const OPENING: &str = "# ==== Comte Log Analyzer session ";
+/// Sessions saved before the app was renamed (Comte Logger) still open.
+const LEGACY_OPENING: &str = "# ==== Comte Logger session ";
 const NOTE_MARKER: &str = "# --- note ";
 const CLOSING: &str = "# ======";
 const NOTE_PREFIX: &str = "# > ";
@@ -173,7 +175,7 @@ fn single_line(value: &str) -> String {
 /// the file is not a saved session.
 pub fn parse_header<S: AsRef<str>>(lines: &[S]) -> Option<(SessionHeader, usize)> {
     let first = lines.first()?.as_ref();
-    if !first.starts_with(OPENING) {
+    if !first.starts_with(OPENING) && !first.starts_with(LEGACY_OPENING) {
         return None;
     }
     let mut header = SessionHeader::default();
@@ -316,7 +318,7 @@ mod tests {
     #[test]
     fn header_is_readable_as_text() {
         let text = render(&sample(), &[]);
-        assert!(text.starts_with("# ==== Comte Logger session ====="));
+        assert!(text.starts_with("# ==== Comte Log Analyzer session ====="));
         assert!(text.contains("# kind:          unity-player\n"));
         assert!(text.contains("# redacted:      yes (12 values)\n"));
         assert!(text.contains("# > Crashes when Steam is not running.\n"));
@@ -350,8 +352,25 @@ mod tests {
         assert!(parse_header(&["[Licensing::Module] hi"]).is_none());
         assert!(parse_header::<&str>(&[]).is_none());
         assert!(
-            parse_header(&["# ==== Comte Logger session =====", "# kind: unity-editor"]).is_none()
+            parse_header(&[
+                "# ==== Comte Log Analyzer session =====",
+                "# kind: unity-editor"
+            ])
+            .is_none()
         );
+    }
+
+    #[test]
+    fn sessions_saved_under_the_old_name_still_open() {
+        let text = render(&sample(), &["a"]).replacen(
+            "# ==== Comte Log Analyzer session",
+            "# ==== Comte Logger session",
+            1,
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        let (parsed, start) = parse_header(&lines).expect("old header");
+        assert_eq!(parsed, sample());
+        assert_eq!(&lines[start..], ["a"]);
     }
 
     #[test]

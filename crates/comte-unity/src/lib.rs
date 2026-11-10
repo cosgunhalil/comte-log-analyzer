@@ -1,6 +1,6 @@
 //! # comte-unity
 //!
-//! Unity support for Comte Logger.
+//! Unity support for Comte Log Analyzer.
 //!
 //! - [`detect`]: tells an Editor log from a Player log by its first lines.
 //! - [`frames`]: parses, classifies and cleans up stack frames (both Unity's
@@ -35,7 +35,7 @@ pub use detect::{detect_file, detect_kind};
 pub use locator::{UnityLocator, UnityLogRoots};
 pub use parser::{EditorParser, Flavor, PlayerParser, UnityParser};
 
-/// Unity as an engine Comte Logger understands.
+/// Unity as an engine Comte Log Analyzer understands.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct UnitySupport;
 

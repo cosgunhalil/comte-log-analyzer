@@ -1,6 +1,6 @@
 [package]
 name = "comte-core"
-description = "Engine-agnostic log model, parser traits and document building for Comte Logger."
+description = "Engine-agnostic log model, parser traits and document building for Comte Log Analyzer."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

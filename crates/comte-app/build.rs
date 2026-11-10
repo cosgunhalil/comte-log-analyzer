@@ -26,12 +26,12 @@ fn main() {
     let mut resource = winresource::WindowsResource::new();
     resource
         .set_icon(&ico.to_string_lossy())
-        .set("ProductName", "Comte Logger")
+        .set("ProductName", "Comte Log Analyzer")
         .set(
             "FileDescription",
-            "Comte Logger: log analyzer for game engines",
+            "Comte Log Analyzer: log analyzer for game engines",
         )
-        .set("LegalCopyright", "Comte Logger contributors");
+        .set("LegalCopyright", "Comte Log Analyzer contributors");
     if let Err(err) = resource.compile() {
         println!("cargo:warning=no exe icon (resource compiler unavailable): {err}");
     }

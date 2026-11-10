@@ -1,4 +1,4 @@
-//! The Comte Logger icon, drawn in code: a rounded indigo tile with four
+//! The Comte Log Analyzer icon, drawn in code: a rounded indigo tile with four
 //! "log lines". Each line has a severity dot (info, info, warning, error).
 //!
 //! Shared by the app (window icon) and `build.rs` (the `.exe` icon), so there

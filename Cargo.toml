@@ -8,7 +8,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Halil Cosgun"]
-description = "Comte Logger: a human-friendly log analyzer for game engines."
+description = "Comte Log Analyzer: a human-friendly log analyzer for game engines."
 
 [workspace.dependencies]
 comte-core = { path = "crates/comte-core" }

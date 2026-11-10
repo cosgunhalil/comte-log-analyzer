@@ -237,12 +237,12 @@ pub fn write(path: &Path, prepared: &Prepared) -> io::Result<()> {
     out.flush()
 }
 
-/// `Documents\ComteLogger\sessions` (follows OneDrive folder redirection).
+/// `Documents\ComteLogAnalyzer\sessions` (follows OneDrive folder redirection).
 pub fn default_dir() -> PathBuf {
     directories::UserDirs::new()
         .and_then(|dirs| dirs.document_dir().map(Path::to_path_buf))
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("ComteLogger")
+        .join("ComteLogAnalyzer")
         .join("sessions")
 }
 

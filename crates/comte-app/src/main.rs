@@ -1,6 +1,6 @@
-//! `comte-logger`: the Comte Logger desktop app.
+//! `comte-log-analyzer`: the Comte Log Analyzer desktop app.
 //!
-//! `comte-logger [log file]` opens the app (with the Unity Editor log when no
+//! `comte-log-analyzer [log file]` opens the app (with the Unity Editor log when no
 //! file is given). The command line lives in the separate `comte` program.
 
 // A GUI program on Windows: no console window next to the app.
