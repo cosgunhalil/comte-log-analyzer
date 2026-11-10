@@ -9,6 +9,7 @@ expression: "report(\"player_session.log\", &mut PlayerParser::new(), ReportStyl
 > 💥 *Crashed in Scene #3*
 > Last error before it: NullReferenceException at Gun.StopShooting()
 > Crashed in game code: SampleGame_Enemies_EnemySpawner_Spawn_m3F2A (GameAssembly)
+> Crashed in your game code (≈ SampleGame.Enemies.EnemySpawner.Spawn)
 
 *Note*
 
@@ -17,6 +18,14 @@ Happens when the gun is disabled mid-shot.
 Repro: start a run, die while shooting.
 
 *Tags:* `crash` `scene 3`
+
+*What this might be*
+
+*Crashed in your game code (≈ SampleGame.Enemies.EnemySpawner.Spawn)* (line 75)
+
+- GameAssembly is your C# compiled by IL2CPP; the method name above is rebuilt from IL2CPP's mangled name. Start there.
+- A managed exception logged just before the crash often explains it.
+- The crash report folder has a .dmp file to open in Visual Studio or WinDbg.
 
 *Problems*
 

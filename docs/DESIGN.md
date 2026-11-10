@@ -195,6 +195,25 @@ Stack frame syntax differs between versions, so the parser accepts both forms:
 
 **Fold groups:** consecutive lines that share a prefix (`[Licensing::*]`, `[Package Manager]`, Bee output, Mono reload chatter, `[Tag] …`) merge into one entry, and indented lines become details of the entry above them. This turns 4,195 real lines into about 255 entries.
 
+**Known problems** (`comte-unity::hints`, sent as `ParseEvent::Hint`: title, advice, line, optional folder):
+- **Rules** match an entry's message and details when it is flushed. Each rule is reported once per log. A matching Info line is raised to Error, because Unity prints some of these as plain lines.
+
+  | Rule | Matches | Says |
+  |---|---|---|
+  | Out of memory | `Trying to allocate: NB … MemoryLabel: X`, `Could not allocate memory`, `OutOfMemoryException` | over 1 TB: "an impossible amount", which means a bug or corrupted data; otherwise "couldn't get 256 MB (GfxDevice)" and how to lower the peak |
+  | Device removed | `device reset/removed`, `DXGI_ERROR_DEVICE_REMOVED/HUNG/RESET`, `887a0005/6`, `VK_ERROR_DEVICE_LOST` | driver crash, GPU timeout (TDR) or video memory; update or roll back; notes an integrated GPU (Intel UHD/HD/Iris, Radeon Graphics) from the graphics block |
+  | Disk full | `No space left on device`, `not enough space on the disk`, `ERROR_DISK_FULL` | free space where the project is |
+  | Package Manager | `An error occurred while resolving packages`, `Cannot perform upm operation` | manifest.json typo or version, network or Git; `upm.log` |
+  | Gradle | `Gradle build failed` | the cause is in Gradle's output ("What went wrong", `Temp/gradleOut`) |
+  | IL2CPP | `il2cpp.exe did not run properly`, `Il2CppBuildException` | disk, antivirus, C++ toolchain |
+- **Licensing** is decided at the end of the log: a failure line (`Channel doesn't exist`, `No valid Unity Editor license`, …) counts only if the log never says `Successfully connected to LicensingClient` or `resolved entitlement`. Healthy sessions are full of licensing "errors" and 30 s timeouts, so anything looser would flag every log.
+- **Crash triage** runs in `finish`, because the crash folder is printed after the stack:
+  - **Where:** the first module below the crash handler's own frames and the Windows frames that only raise the fault. That can be a GPU driver (NVIDIA `nvwgf2umx`…, AMD `atiumd`…, Intel `igd`…), GameAssembly (game code, with the IL2CPP method rebuilt: `SampleGame_Enemies_EnemySpawner_Spawn_m3F2A` → `SampleGame.Enemies.EnemySpawner.Spawn`), Mono, the engine (`UnityPlayer`), the graphics runtime, Windows, or another DLL (a plugin or an overlay).
+  - **Symbols:** `ERROR: SymGet…` lines and the loaded-module list are counted, not listed ("12 modules loaded (11 without symbols)", "3 symbol lookups failed"). The hint explains frames without names.
+  - **Folder:** the crash report folder, with its `.dmp` file.
+  - The crash verdict adds the triage title as its last detail.
+- **UI:** "What this might be" cards under the verdict, each with "Show it →". "📂 Open folder" appears when the path exists on this machine; otherwise the path is shown greyed, since it is on the computer that wrote the log. The selected entry's details show its own card. Reports get a "What this might be" section.
+
 **Where it stopped:** at the end of the log, `finish` sends `ParseEvent::Unfinished` when something is still running:
 - **An import** that never got its result. Unity writes the result onto the `Start importing` line once it is done, so a hung import is the last, unfinished line. The oldest one is named, and the others are listed as "also still running".
 - **A domain reload or script compile** whose section is still open and started within the last 40 lines. A stuck editor writes nothing more, while a section the log merely never closed is followed by plenty of output.

@@ -297,6 +297,10 @@ fn crash_verdict(doc: &LogDocument, crash: &LogEntry) -> Verdict {
     } else if let Some(frame) = crash.stack.first() {
         details.push(format!("Top native frame: {}", frame.text));
     }
+    // What the crash looks like (in a GPU driver, in game code, …).
+    if let Some(hint) = doc.hints_for(crash).next() {
+        details.push(hint.title.clone());
+    }
     Verdict {
         kind: VerdictKind::Crashed,
         headline,

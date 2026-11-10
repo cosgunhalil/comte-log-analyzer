@@ -31,7 +31,7 @@ use crate::ide::{
 };
 use crate::live::{LiveEvent, LiveTail};
 use crate::loader::{LoadEvent, Loaded, Loader};
-use crate::overview::{Jump, overview};
+use crate::overview::{Jump, hint_card, overview};
 use crate::pins::{Pins, entry_reference};
 use crate::report_export::{
     BuiltReport, ReportOptions, build_report, report_file_name, system_summary,
@@ -1107,6 +1107,26 @@ impl ComteApp {
     }
 
     /// Opens a source location from the log in the chosen editor.
+    /// Opens a folder (or file) in the system's file manager.
+    fn open_path(&mut self, path: &str) {
+        let native = path.replace('/', std::path::MAIN_SEPARATOR_STR);
+        let program = if cfg!(windows) {
+            "explorer"
+        } else if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        let result = std::process::Command::new(program).arg(&native).spawn();
+        self.notice = Some((
+            match result {
+                Ok(_) => format!("Opened {native}"),
+                Err(e) => format!("Could not open {native}: {e}"),
+            },
+            Instant::now(),
+        ));
+    }
+
     fn open_location(&mut self, location: &comte_core::SourceRef) {
         let roots = self.project_roots();
         let Some(file) = resolve_source(&location.path, &roots) else {
@@ -2270,6 +2290,7 @@ impl ComteApp {
         let mut jump = None;
         let mut back = false;
         let mut open: Option<comte_core::SourceRef> = None;
+        let mut open_path: Option<String> = None;
         let mut copy: Option<(u64, CopyWhat)> = None;
         let mut toggle_pin: Option<u64> = None;
         let mut new_note: Option<(usize, String)> = None;
@@ -2309,6 +2330,7 @@ impl ComteApp {
                         let outcome =
                             entry_details(ui, current, entry, repeats, note.as_mut(), &links);
                         open = outcome.open;
+                        open_path = outcome.open_path;
                         copy = outcome.copy.map(|what| (entry.id, what));
                         if outcome.toggle_pin {
                             toggle_pin = Some(entry.id);
@@ -2328,6 +2350,9 @@ impl ComteApp {
         if let Some(location) = open {
             self.open_location(&location);
         }
+        if let Some(path) = open_path {
+            self.open_path(&path);
+        }
         if let Some((id, what)) = copy {
             self.copy_entry(ui.ctx(), id, what);
         }
@@ -2343,6 +2368,16 @@ impl ComteApp {
             Some(Jump::Entry(id)) => self.reveal(id),
             Some(Jump::Section(id)) => self.reveal_section(id),
             Some(Jump::CopySummary) => self.copy_summary(ui.ctx()),
+            Some(Jump::OpenHintPath(i)) => {
+                let path = self
+                    .current
+                    .as_ref()
+                    .and_then(|c| c.doc.hints().get(i))
+                    .and_then(|h| h.path.clone());
+                if let Some(path) = path {
+                    self.open_path(&path);
+                }
+            }
             None => {}
         }
     }
@@ -2678,6 +2713,8 @@ impl Links {
 #[derive(Default)]
 struct DetailsOutcome {
     open: Option<comte_core::SourceRef>,
+    /// A hint's folder to open.
+    open_path: Option<String>,
     copy: Option<CopyWhat>,
     toggle_pin: bool,
 }
@@ -2749,6 +2786,14 @@ fn entry_details(
     message.wrap.max_width = ui.available_width();
     let ranges = links.query.ranges(&message.text);
     ui.label(highlight(message, &ranges, highlight_color(ui.visuals())));
+    // What this entry most likely is (crash triage, known problems).
+    let mut open_path = None;
+    for hint in current.doc.hints_for(entry) {
+        ui.add_space(4.0);
+        if hint_card(ui, hint, false).open {
+            open_path.clone_from(&hint.path);
+        }
+    }
     ui.horizontal_wrapped(|ui| {
         if let Some(culprit) = entry.culprit()
             && resolve_source(&culprit.path, &links.roots).is_some()
@@ -2861,6 +2906,7 @@ fn entry_details(
         });
     DetailsOutcome {
         open,
+        open_path,
         copy,
         toggle_pin,
     }

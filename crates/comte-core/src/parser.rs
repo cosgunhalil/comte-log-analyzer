@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use crate::activity::{AssetImport, BuildReport, Unfinished};
+use crate::activity::{AssetImport, BuildReport, Hint, Unfinished};
 use crate::model::{Category, Fact, LogEntry, Metric, SectionKind, Severity};
 
 /// Opening of a timeline section. [`crate::LogDocument`] assigns its id,
@@ -40,6 +40,8 @@ pub enum ParseEvent {
     BuildReport(BuildReport),
     /// Sent from `finish`: an operation that started and never ended.
     Unfinished(Unfinished),
+    /// A known problem, explained.
+    Hint(Hint),
 }
 
 pub trait LogParser: Send {

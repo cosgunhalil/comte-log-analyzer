@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use comte_core::{
-    BuildReport, Insights, Repeated, SessionContent, SessionHeader, Severity, VerdictKind,
+    BuildReport, Hint, Insights, Repeated, SessionContent, SessionHeader, Severity, VerdictKind,
     format_bytes, format_duration,
 };
 use eframe::egui::{self, Color32, RichText, Sense, Ui, vec2};
@@ -21,6 +21,62 @@ pub enum Jump {
     Section(u32),
     /// Copy the plain-text summary (verdict, counts, environment).
     CopySummary,
+    /// Open the folder or file of the hint with this index (`doc.hints()`).
+    OpenHintPath(usize),
+}
+
+/// What the user did with a hint card.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct HintAction {
+    pub show: bool,
+    pub open: bool,
+}
+
+/// A known problem: title, advice, and buttons to see the entry or open its
+/// folder. `show_button` is off inside the entry's own details.
+pub fn hint_card(ui: &mut Ui, hint: &Hint, show_button: bool) -> HintAction {
+    let mut action = HintAction::default();
+    let accent = Color32::from_rgb(0x3d, 0x8b, 0xfd);
+    egui::Frame::new()
+        .fill(tint(accent))
+        .stroke(egui::Stroke::new(1.0, accent.gamma_multiply(0.5)))
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("💡").color(accent));
+                ui.label(RichText::new(&hint.title).strong());
+            });
+            for advice in &hint.advice {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("•").weak());
+                    ui.label(advice);
+                });
+            }
+            ui.horizontal_wrapped(|ui| {
+                if show_button && ui.small_button("Show it →").clicked() {
+                    action.show = true;
+                }
+                if let Some(path) = &hint.path {
+                    if std::path::Path::new(path).exists() {
+                        if ui
+                            .small_button("📂 Open folder")
+                            .on_hover_text(path)
+                            .clicked()
+                        {
+                            action.open = true;
+                        }
+                    } else {
+                        ui.label(RichText::new(path).monospace().weak().small())
+                            .on_hover_text(
+                                "Not on this machine: it is on the computer that wrote the log",
+                            );
+                    }
+                }
+            });
+        });
+    action
 }
 
 pub fn overview(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
@@ -46,6 +102,22 @@ pub fn overview(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
 
     let insights = &current.insights;
     jump = jump.or(verdict_banner(ui, insights, quiet_for(current)));
+
+    if !current.doc.hints().is_empty() {
+        heading(ui, "What this might be");
+        for (i, hint) in current.doc.hints().iter().enumerate() {
+            let action = hint_card(ui, hint, true);
+            if action.show
+                && let Some(entry) = current.doc.entry_at_line(hint.line)
+            {
+                jump = Some(Jump::Entry(entry.id));
+            }
+            if action.open {
+                jump = Some(Jump::OpenHintPath(i));
+            }
+            ui.add_space(4.0);
+        }
+    }
 
     if !insights.repeated_problems.is_empty() {
         heading(ui, "Most repeated problems");

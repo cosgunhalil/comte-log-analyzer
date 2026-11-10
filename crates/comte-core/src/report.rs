@@ -95,6 +95,7 @@ pub fn render_report(input: &ReportInput<'_>, style: ReportStyle) -> String {
         }
     }
 
+    hints_section(&mut out, doc);
     pinned_section(&mut out, doc, input.pins);
 
     // Counts
@@ -234,6 +235,20 @@ pub fn render_report(input: &ReportInput<'_>, style: ReportStyle) -> String {
         doc.line_count()
     ));
     out.finish()
+}
+
+/// "What this might be": the known problems the log shows, with advice.
+fn hints_section(out: &mut Out, doc: &LogDocument) {
+    if doc.hints().is_empty() {
+        return;
+    }
+    out.h2("What this might be");
+    for hint in doc.hints() {
+        out.para(&format!("{} (line {})", out.bold(&hint.title), hint.line));
+        for advice in &hint.advice {
+            out.bullet(advice);
+        }
+    }
 }
 
 /// The slowest asset imports, when the log has any.

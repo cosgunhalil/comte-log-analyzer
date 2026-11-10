@@ -35,6 +35,15 @@ paste a short report into Jira or Slack.
 - **Tells you what matters.** A one-line verdict ("Crashed in Scene #3",
   "103 errors (4 different)"), the most repeated problems, and the slowest
   operations (domain reloads, asset refreshes, compiles).
+- **Explains known problems.** "What this might be" turns a line into an
+  answer:
+  - a native crash says where it happened (a GPU driver, your IL2CPP code,
+    Mono, the engine or a plugin) and how many frames have no symbols, and
+    links the crash folder
+  - out of memory tells a real shortage from an impossible request (a bug)
+  - also covered: a removed graphics device (with a note when an integrated
+    GPU was used), a full disk, Package Manager, Gradle, IL2CPP and licensing
+    failures
 - **Says where Unity got stuck.** When the log ends in the middle of
   something, the verdict says what: "⏳ Stopped while importing
   Assets/Hero.fbx", a domain reload or a script compile. It also says how long

@@ -33,6 +33,21 @@ pub struct Unfinished {
     pub also: Vec<String>,
 }
 
+/// A known problem recognized in the log, explained in plain words: what it
+/// most likely is, and what to try. Parsers know their engine's patterns
+/// ("device removed", "No space left on device", a crash in a GPU driver).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hint {
+    /// "The graphics driver reset (device removed)"
+    pub title: String,
+    /// What it means and what to try, one sentence each.
+    pub advice: Vec<String>,
+    /// Line of the entry it is about.
+    pub line: usize,
+    /// A file or folder that helps (a crash report folder, a companion log).
+    pub path: Option<String>,
+}
+
 /// One row of a size table: a category ("Textures") or an asset path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SizeRow {

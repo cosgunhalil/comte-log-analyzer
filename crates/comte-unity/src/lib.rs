@@ -24,6 +24,7 @@ macro_rules! regex {
 mod common;
 pub mod detect;
 pub mod frames;
+pub mod hints;
 pub mod locator;
 mod parser;
 

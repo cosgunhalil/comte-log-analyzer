@@ -26,6 +26,7 @@ use crate::common::{
     secs,
 };
 use crate::frames::{self, ParsedFrame};
+use crate::hints::{CrashStats, crash_hint, entry_text, rule_hint};
 
 regex!(
     COMPILER = r"^(?P<path>.+?\.cs)\((?P<line>\d+),(?P<col>\d+)\): (?P<level>error|warning) (?P<code>CS\d+): (?P<msg>.*)$"
@@ -76,6 +77,8 @@ regex!(
 );
 regex!(BUILD_TOTAL = r"^Complete (?:build )?size\s+(?P<size>[\d.]+ ?[kmgKMG]?[bB])");
 regex!(BUILD_ASSET = r"^\s*(?P<size>[\d.]+ ?[kmgKMG]?[bB])\s+[\d.]+%\s+(?P<path>\S.*)$");
+// `C:\Game\UnityPlayer.dll:UnityPlayer.dll (00007FFB2A6B0000), size: 28655616 (result: 0), SymType: '-exported-', PDB: ''`
+regex!(CRASH_MODULE = r"^\S.*:[^:\\/]+\.(?i:dll|exe) \([0-9A-Fa-f]+\), size: \d+");
 regex!(POSIX_FRAME = r"^\s*#\d+\s+(?:pc\s+)?(?:0x)?[0-9a-fA-F]+\s+(?:in\s+)?(?P<func>.+)$");
 
 /// Which Unity program wrote the log.
@@ -217,6 +220,10 @@ struct Pending {
     after_blank: bool,
     /// The size report this entry is collecting (`Mode::BuildReport`).
     build: Option<BuildReport>,
+    /// Module and symbol counts of a native crash (`Mode::Crash`).
+    crash: CrashStats,
+    /// The crash report folder named by this entry (`Block::CrashReport`).
+    crash_folder: Option<String>,
 }
 
 impl Pending {
@@ -231,6 +238,8 @@ impl Pending {
             gfx_gpu: None,
             after_blank: false,
             build: None,
+            crash: CrashStats::default(),
+            crash_folder: None,
         }
     }
 
@@ -288,6 +297,18 @@ pub struct UnityParser {
     /// Imports started but not finished: (worker, path, line), oldest first.
     importing: Vec<(Option<u32>, String, usize)>,
     last_line: usize,
+    /// The GPU, once the graphics block named it.
+    gpu: Option<String>,
+    /// Native crashes seen: (line, stack, counts). Triaged in `finish`,
+    /// once the crash report folder (printed after the stack) is known.
+    crashes: Vec<(usize, Vec<StackFrame>, CrashStats)>,
+    crash_folder: Option<String>,
+    /// Rules already reported (each once per log).
+    hinted: Vec<&'static str>,
+    /// A licensing failure line, and whether Unity ever connected to the
+    /// licensing client. Healthy logs are full of licensing "errors".
+    licensing_problem: Option<(usize, String)>,
+    licensing_connected: bool,
 }
 
 impl UnityParser {
@@ -303,6 +324,12 @@ impl UnityParser {
             open_lines: Vec::new(),
             importing: Vec::new(),
             last_line: 0,
+            gpu: None,
+            crashes: Vec::new(),
+            crash_folder: None,
+            hinted: Vec::new(),
+            licensing_problem: None,
+            licensing_connected: false,
         }
     }
 
@@ -408,6 +435,64 @@ impl UnityParser {
         }
     }
 
+    fn scan_licensing(&mut self, n: usize, text: &str) {
+        if !text.contains("icens") {
+            return;
+        }
+        if text.contains("Successfully connected to LicensingClient")
+            || text.contains("Successfully resolved entitlement")
+        {
+            self.licensing_connected = true;
+        } else if self.licensing_problem.is_none()
+            && [
+                "No valid Unity Editor license",
+                "No ULF license found",
+                "Cannot connect to Licensing Client",
+                "Channel doesn't exist",
+                "Failed to launch LicensingClient",
+                "LicensingClient has failed to start",
+            ]
+            .iter()
+            .any(|needle| text.contains(needle))
+        {
+            self.licensing_problem = Some((n, text.to_owned()));
+        }
+    }
+
+    /// Hints that need the whole log: crash triage (the crash folder comes
+    /// after the stack) and licensing (it only failed if it never connected).
+    fn final_hints(&self, out: &mut Vec<ParseEvent>) {
+        for (line, stack, stats) in &self.crashes {
+            out.push(ParseEvent::Hint(crash_hint(
+                stack,
+                *stats,
+                self.crash_folder.as_deref(),
+                *line,
+            )));
+        }
+        if let Some((line, _)) = &self.licensing_problem
+            && !self.licensing_connected
+            && !self.is_player()
+        {
+            out.push(ParseEvent::Hint(comte_core::Hint {
+                title: "Unity couldn't get a license".to_owned(),
+                advice: vec![
+                    "The Editor never connected to Unity's licensing client. Restart Unity \
+                     Hub (it starts the client) and sign in again."
+                        .to_owned(),
+                    "A firewall, proxy or VPN can block it. Unity.Licensing.Client.log (in \
+                     the Unity folder of your local app data) has the details."
+                        .to_owned(),
+                    "Licensing \"errors\" in a session that did connect are normal; only \
+                     this case needs fixing."
+                        .to_owned(),
+                ],
+                line: *line,
+                path: None,
+            }));
+        }
+    }
+
     /// What the editor was still doing at the end of the log, if anything.
     fn unfinished(&self) -> Option<Unfinished> {
         // A shutdown clears imports and closes sections: whatever is still
@@ -472,6 +557,41 @@ impl UnityParser {
             if let Some(report) = p.build.take() {
                 p.entry.message = build_report_message(&report);
                 out.push(ParseEvent::BuildReport(report));
+            }
+            if let Some(gpu) = p.gfx_gpu.take() {
+                self.gpu = Some(gpu);
+            }
+            if let Some(folder) = p.crash_folder.take() {
+                self.crash_folder = Some(folder);
+            }
+            if p.mode == Mode::Crash {
+                let c = p.crash;
+                if c.modules > 0 {
+                    p.entry.details.push(format!(
+                        "{} modules loaded ({} without symbols)",
+                        c.modules, c.modules_without_symbols
+                    ));
+                }
+                if c.symbol_errors > 0 {
+                    p.entry.details.push(format!(
+                        "{} symbol lookups failed (frames Windows couldn't name)",
+                        c.symbol_errors
+                    ));
+                }
+                self.crashes
+                    .push((p.entry.line_range.start, p.entry.stack.clone(), c));
+            }
+            let text = entry_text(&p.entry.message, &p.entry.details);
+            if let Some((id, mut hint)) = rule_hint(&text, self.gpu.as_deref()) {
+                // Unity prints some of these as plain lines; they are errors.
+                if p.entry.severity < Severity::Error {
+                    p.entry.severity = Severity::Error;
+                }
+                if !self.hinted.contains(&id) {
+                    self.hinted.push(id);
+                    hint.line = p.entry.line_range.start;
+                    out.push(ParseEvent::Hint(hint));
+                }
             }
             let last_line = p.entry.line_range.end.saturating_sub(1);
             out.push(ParseEvent::Entry(p.entry));
@@ -584,6 +704,21 @@ impl UnityParser {
                 if p.entry.line_count() >= MAX_CRASH_LINES {
                     return false;
                 }
+                // Noise for people: counted, not listed.
+                let trimmed = text.trim_start();
+                if trimmed.starts_with("ERROR: SymGet") || trimmed.starts_with("ERROR: SymFrom") {
+                    p.crash.symbol_errors += 1;
+                    p.absorb(n);
+                    return true;
+                }
+                if CRASH_MODULE.is_match(text) {
+                    p.crash.modules += 1;
+                    if text.contains("PDB: ''") {
+                        p.crash.modules_without_symbols += 1;
+                    }
+                    p.absorb(n);
+                    return true;
+                }
                 if let Some(frame) = native_frame(text) {
                     p.entry.stack.push(frame);
                 } else if !text.starts_with("==========") {
@@ -669,6 +804,7 @@ impl UnityParser {
                                     folder.trim(),
                                     n,
                                 )));
+                                p.crash_folder = Some(folder.trim().to_owned());
                             }
                         }
                         Block::None => {}
@@ -1213,6 +1349,7 @@ impl LogParser for UnityParser {
         }
         self.scan_facts(line_no, text, out);
         self.scan_imports(line_no, text, out);
+        self.scan_licensing(line_no, text);
         if self.continue_pending(line_no, text, out) {
             return;
         }
@@ -1221,6 +1358,7 @@ impl LogParser for UnityParser {
 
     fn finish(&mut self, out: &mut Vec<ParseEvent>) {
         self.flush(out);
+        self.final_hints(out);
         if let Some(unfinished) = self.unfinished() {
             out.push(ParseEvent::Unfinished(unfinished));
         }
@@ -1928,6 +2066,75 @@ Cleanup mono
             quit.unfinished().is_none(),
             "a clean shutdown is not a hang"
         );
+    }
+
+    #[test]
+    fn crash_symbol_noise_is_counted_and_the_crash_is_triaged() {
+        let text = concat!(
+            "Crash!!!\n",
+            "SymInit: Symbol-SearchPath: '.', symOptions: 534, UserName: 'player'\n",
+            "C:\\Game\\UnityPlayer.dll:UnityPlayer.dll (00007FFB2A6B0000), size: 28655616 (result: 0), SymType: '-exported-', PDB: ''\n",
+            "C:\\Windows\\System32\\nvwgf2umx.dll:nvwgf2umx.dll (00007FFB10000000), size: 1000 (result: 0), SymType: '-exported-', PDB: ''\n",
+            "========== OUTPUTTING STACK TRACE ==================\n",
+            "0x00007FFB10001234 (nvwgf2umx) (function-name not available)\n",
+            "  ERROR: SymGetSymFromAddr64, GetLastError: 'Attempt to access invalid address.' (Address: 00007FFB10001234)\n",
+            "0x00007FFB2ABF1E3D (UnityPlayer) GfxDeviceD3D11::Present\n",
+            "========== END OF STACKTRACE ===========\n",
+            "A crash has been intercepted by the crash handler. For call stack and other details, see the latest crash report generated in:\n",
+            " * C:/Temp/Studio/Game/Crashes\n",
+        );
+        let doc = parse_reader(Cursor::new(text), &mut PlayerParser::new()).unwrap();
+        let crash = &doc.entries()[0];
+        assert_eq!(crash.stack.len(), 2);
+        assert!(
+            !crash
+                .details
+                .iter()
+                .any(|d| d.contains("SymGetSymFromAddr64"))
+        );
+        assert!(
+            crash
+                .details
+                .contains(&"2 modules loaded (2 without symbols)".to_owned())
+        );
+        let hint = doc.hints_for(crash).next().expect("triaged");
+        assert_eq!(
+            hint.title,
+            "Crashed inside the NVIDIA graphics driver (nvwgf2umx)"
+        );
+        assert_eq!(hint.path.as_deref(), Some("C:/Temp/Studio/Game/Crashes"));
+    }
+
+    #[test]
+    fn licensing_is_a_problem_only_if_it_never_connected() {
+        let failed = parse(concat!(
+            "[Licensing::Module] Trying to connect to existing licensing client channel...\n",
+            "[Licensing::Module] Channel doesn't exist: \"LicenseClient-dev\"\n",
+            "[Licensing::Module] Error: Timed-out after 60.00s, waiting for channel\n",
+        ));
+        assert_eq!(doc_titles(&failed), ["Unity couldn't get a license"]);
+        let recovered = parse(concat!(
+            "[Licensing::Module] Channel doesn't exist: \"LicenseClient-dev\"\n",
+            "[Licensing::Module] Successfully connected to LicensingClient on channel: \"LicenseClient-dev\"\n",
+            "[Licensing::Client] Error: Timed-out after 30.00s, waiting for AccessTokenResponse\n",
+        ));
+        assert!(doc_titles(&recovered).is_empty(), "healthy logs are noisy");
+    }
+
+    fn doc_titles(doc: &LogDocument) -> Vec<String> {
+        doc.hints().iter().map(|h| h.title.clone()).collect()
+    }
+
+    #[test]
+    fn rules_fire_once_per_log() {
+        let doc = parse(concat!(
+            "Failed to present D3D11 swapchain due to device reset/removed.\n",
+            "[Flow] retry\n",
+            "Failed to present D3D11 swapchain due to device reset/removed.\n",
+        ));
+        assert_eq!(doc.hints().len(), 1);
+        assert_eq!(doc.hints()[0].line, 1);
+        assert_eq!(doc.counts().error, 2, "both lines are errors, not chatter");
     }
 
     #[test]
