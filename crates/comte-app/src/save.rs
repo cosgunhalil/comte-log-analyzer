@@ -7,11 +7,12 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use comte_core::{
-    FactKey, RedactionReport, Redactor, SessionContent, SessionHeader, kind_token, parse_header,
-    parse_tags, read_head, write_session,
+    FactKey, Pin, RedactionReport, Redactor, SessionContent, SessionHeader, kind_token,
+    parse_header, parse_tags, read_head, write_session,
 };
 
 use crate::loader::Loaded;
+use crate::pins::pins_for_saved_lines;
 use crate::view::Filter;
 
 /// Which lines go into the saved file.
@@ -33,6 +34,8 @@ pub struct SaveRequest {
     pub tags: String,
     pub content: ContentChoice,
     pub redact: bool,
+    /// Pins of the open log (by its line numbers), with notes.
+    pub pins: Vec<Pin>,
 }
 
 impl Default for SaveRequest {
@@ -42,6 +45,7 @@ impl Default for SaveRequest {
             tags: String::new(),
             content: ContentChoice::Full,
             redact: true, // DESIGN §0: redact by default
+            pins: Vec::new(),
         }
     }
 }
@@ -56,6 +60,14 @@ pub struct Prepared {
 
 /// The original lines of every entry the filter shows, in file order.
 pub fn visible_lines<'a>(loaded: &'a Loaded, filter: &Filter) -> Vec<&'a str> {
+    visible_line_numbers(loaded, filter)
+        .into_iter()
+        .filter_map(|n| loaded.raw.get(n - 1).map(String::as_str))
+        .collect()
+}
+
+/// The (1-based) numbers of the lines [`visible_lines`] returns.
+pub fn visible_line_numbers(loaded: &Loaded, filter: &Filter) -> Vec<usize> {
     let query = filter.query();
     let mut ranges: Vec<std::ops::Range<usize>> = loaded
         .doc
@@ -65,21 +77,17 @@ pub fn visible_lines<'a>(loaded: &'a Loaded, filter: &Filter) -> Vec<&'a str> {
         .map(|e| e.line_range.clone())
         .collect();
     ranges.sort_by_key(|r| r.start);
-    let mut lines = Vec::new();
-    let mut next = 0; // first line not yet written
+    let mut numbers = Vec::new();
+    let mut next = 1; // first line not yet taken
     for range in ranges {
         let start = range.start.max(next);
-        if start < range.end {
-            lines.extend(
-                loaded
-                    .raw_lines(start..range.end)
-                    .iter()
-                    .map(String::as_str),
-            );
-            next = range.end;
+        let end = range.end.min(loaded.raw.len() + 1);
+        if start < end {
+            numbers.extend(start..end);
+            next = end;
         }
     }
-    lines
+    numbers
 }
 
 /// "errors and warnings, noise hidden, search "save""-style description.
@@ -134,9 +142,21 @@ pub fn prepare(
     saved_at: String,
     user_names: &[&str],
 ) -> Prepared {
-    let selected: Vec<&str> = match request.content {
-        ContentChoice::Full => loaded.raw.iter().map(String::as_str).collect(),
-        ContentChoice::Visible => visible_lines(loaded, filter),
+    let (selected, pins): (Vec<&str>, Vec<Pin>) = match request.content {
+        ContentChoice::Full => (
+            loaded.raw.iter().map(String::as_str).collect(),
+            request.pins.clone(),
+        ),
+        ContentChoice::Visible => {
+            let numbers = visible_line_numbers(loaded, filter);
+            (
+                numbers
+                    .iter()
+                    .map(|&n| loaded.raw[n - 1].as_str())
+                    .collect(),
+                pins_for_saved_lines(&request.pins, &numbers),
+            )
+        }
     };
     // A reopened session keeps pointing at the log it was made from.
     let (source, source_path) = match &loaded.session {
@@ -144,23 +164,31 @@ pub fn prepare(
         None => (loaded.title.clone(), loaded.path.display().to_string()),
     };
 
-    let (lines, source_path, report) = if request.redact {
+    let (lines, source_path, report, pins) = if request.redact {
         // Learn user names from the whole log, not just the saved part.
         let mut redactor = Redactor::for_lines(&loaded.raw, user_names);
         let lines: Vec<String> = selected
             .iter()
             .map(|l| redactor.redact_line(l).into_owned())
             .collect();
+        let pins = pins
+            .into_iter()
+            .map(|pin| Pin {
+                note: redactor.redact_line(&pin.note).into_owned(),
+                ..pin
+            })
+            .collect();
         let report = redactor.report().clone();
         let path = Redactor::for_lines(&[source_path.as_str()], user_names)
             .redact_line(&source_path)
             .into_owned();
-        (lines, path, Some(report))
+        (lines, path, Some(report), pins)
     } else {
         (
             selected.iter().map(|l| (*l).to_owned()).collect(),
             source_path,
             None,
+            pins,
         )
     };
 
@@ -181,6 +209,7 @@ pub fn prepare(
         redacted: report.as_ref().map(|r| r.total),
         tags: parse_tags(&request.tags),
         note: request.note.trim_end().to_owned(),
+        pins,
     };
     Prepared {
         header,
@@ -313,6 +342,10 @@ mod tests {
             tags: "save, play mode, , Save".to_owned(),
             content: ContentChoice::Full,
             redact: true,
+            pins: vec![Pin {
+                line: 75,
+                note: "obsolete API; was this before the crash?".to_owned(),
+            }],
         };
         let prepared = prepare(
             &original,
@@ -333,6 +366,10 @@ mod tests {
         assert_eq!(session.source, "Editor.log");
         assert_eq!(session.engine_version.as_deref(), Some("6000.3.11f1"));
         assert!(reopened.kind_label.ends_with("saved session"));
+        // The pin still points at the same entry in the saved file.
+        assert_eq!(session.pins, request.pins);
+        let pinned = reopened.doc.entry_starting_at(75).expect("pinned entry");
+        assert!(pinned.message.contains("CS0618"));
 
         // Same structure as the original: redaction keeps the log parseable.
         assert_eq!(reopened.doc.entries().len(), original.doc.entries().len());
@@ -392,10 +429,33 @@ mod tests {
             "info entries left out"
         );
 
-        // The saved part re-parses into the same problems.
+        // The saved part re-parses into the same problems, and pins move to
+        // the saved file's line numbers (a pin on a left-out line is dropped).
+        let crash = loaded
+            .doc
+            .entries()
+            .iter()
+            .find(|e| e.severity == Severity::Crash)
+            .unwrap();
+        let info = loaded
+            .doc
+            .entries()
+            .iter()
+            .find(|e| e.severity == Severity::Info)
+            .unwrap();
         let request = SaveRequest {
             content: ContentChoice::Visible,
             redact: false,
+            pins: vec![
+                Pin {
+                    line: info.line_range.start,
+                    note: "not saved".to_owned(),
+                },
+                Pin {
+                    line: crash.line_range.start,
+                    note: "here".to_owned(),
+                },
+            ],
             ..SaveRequest::default()
         };
         let prepared = prepare(&loaded, &filter, &request, String::new(), &[]);
@@ -411,6 +471,11 @@ mod tests {
         let saved = reopened.doc.counts();
         assert_eq!(saved.errors(), original.errors());
         assert_eq!(saved.warning, original.warning);
+        let pins = &reopened.session.as_ref().unwrap().pins;
+        assert_eq!(pins.len(), 1);
+        assert_eq!(pins[0].note, "here");
+        let pinned = reopened.doc.entry_starting_at(pins[0].line).unwrap();
+        assert_eq!(pinned.severity, Severity::Crash);
     }
 
     #[test]

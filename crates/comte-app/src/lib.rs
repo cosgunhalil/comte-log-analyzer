@@ -7,7 +7,6 @@
 //!   `--compare`, `--report`).
 
 mod app;
-mod bookmarks;
 mod cli;
 mod compare_view;
 mod devtools;
@@ -16,12 +15,13 @@ mod icon;
 mod ide;
 mod live;
 mod loader;
-mod minimap;
 mod overview;
+mod pins;
 mod report_export;
 mod save;
 mod search;
 mod settings;
+mod strip;
 mod theme;
 mod view;
 

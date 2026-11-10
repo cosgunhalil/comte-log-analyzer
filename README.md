@@ -25,7 +25,10 @@ paste a short report into Jira or Slack.
   - Search finds entries containing all your words, anywhere in the message,
     details, stack frames or file paths. `"a phrase"` matches exactly, `-word`
     excludes, and there are case and regex toggles. Matches are highlighted,
-    and ▽ switches between hiding non-matches and only highlighting them.
+    and **Hide others | Highlight** chooses whether non-matches stay in view.
+  - A **timeline strip** beside the list shows the log's sections as bands,
+    tinted by their worst problem, with ticks for errors, pins and matches.
+    Hover a band to see the section, click to go there.
   - Stack traces show your code in bold and fold the engine frames.
   - Unity rich text in your own logs (`<color=cyan>`, `<b>`, `<i>`) is shown
     in color, as in Unity's console.
@@ -47,10 +50,9 @@ paste a short report into Jira or Slack.
 - **Copies what you need.** Copy an entry's original lines or its message (in
   the details or by right-clicking a row), or a redacted summary of the log
   and its environment for a bug report.
-- **Bookmarks and a minimap.** Press B to bookmark an entry (🔖), F2 to go
-  through your bookmarks; they're also listed on the left. A thin strip
-  beside the list shows where the errors, warnings, bookmarks and search
-  matches are; click or drag it to jump.
+- **Pins with notes.** Press P to pin an entry (📌) and write why it matters.
+  Pins are listed on the left, saved with the session and included in
+  reports, so whoever opens the file sees what you saw.
 
 ![Details of an exception with links into the project](docs/images/details.png)
 
@@ -99,12 +101,13 @@ comte --report path/to/Player.log --slack
 
 | Keys | Action |
 |---|---|
-| F8 / Shift+F8 | Next / previous warning or error |
-| 1 / 2 / 3 | Show or hide errors / warnings / info |
+| N / Shift+N (or F8) | Next / previous warning or error |
+| ] / [ | Next / previous section (Startup, Play mode #1, …) |
+| E / W / I | Show or hide Errors / Warnings / Info |
+| P | Pin the selected entry, or unpin it |
+| Alt+↓ / Alt+↑ | Next / previous pin |
 | Home / End | First / last entry |
 | Ctrl+Shift+C | Copy the selected entry's original lines |
-| B | Bookmark the selected entry, or remove its bookmark |
-| F2 / Shift+F2 | Next / previous bookmark |
 | ↑ / ↓, Esc | Move / clear the selection |
 | Ctrl+F | Search messages, files and stack frames |
 | Enter / Shift+Enter, F3 / Shift+F3 | Next / previous search match |

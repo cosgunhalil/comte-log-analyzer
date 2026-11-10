@@ -106,6 +106,12 @@ impl LogDocument {
         self.entries.get(usize::try_from(id).ok()?)
     }
 
+    /// The entry whose first line is `line` (entries are in line order).
+    pub fn entry_starting_at(&self, line: usize) -> Option<&LogEntry> {
+        let i = self.entries.partition_point(|e| e.line_range.start < line);
+        self.entries.get(i).filter(|e| e.line_range.start == line)
+    }
+
     pub fn sections(&self) -> &[Section] {
         &self.sections
     }
@@ -183,6 +189,23 @@ mod tests {
             title: title.to_owned(),
             line,
         })
+    }
+
+    #[test]
+    fn finds_entries_by_their_first_line() {
+        let mut doc = LogDocument::new();
+        doc.apply_all([
+            entry(Severity::Info, 1, "a"),
+            ParseEvent::Entry(LogEntry::new(Severity::Error, Category::UserLog, "b", 2..7)),
+            entry(Severity::Info, 7, "c"),
+        ]);
+        assert_eq!(doc.entry_starting_at(2).map(|e| e.id), Some(1));
+        assert_eq!(doc.entry_starting_at(7).map(|e| e.id), Some(2));
+        assert!(
+            doc.entry_starting_at(3).is_none(),
+            "inside an entry, not its start"
+        );
+        assert!(doc.entry_starting_at(99).is_none());
     }
 
     #[test]

@@ -141,9 +141,11 @@ pub fn overview(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
 
     ui.add_space(10.0);
     ui.label(
-        RichText::new("Click an item to jump to it. F8 jumps to the next problem.")
-            .weak()
-            .small(),
+        RichText::new(
+            "Click an item to jump to it. N goes to the next problem, ] to the next section.",
+        )
+        .weak()
+        .small(),
     );
     jump
 }

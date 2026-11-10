@@ -14,6 +14,7 @@ use crate::compare::{Comparison, ProblemDiff, format_percent};
 use crate::document::LogDocument;
 use crate::insights::{Insights, VerdictKind};
 use crate::model::{FactKey, FrameKind, LogEntry, Severity, format_duration};
+use crate::session::Pin;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReportStyle {
@@ -47,6 +48,8 @@ pub struct ReportInput<'a> {
     pub comparison: Option<(&'a str, &'a Comparison)>,
     /// How many problems get their own section.
     pub max_problems: usize,
+    /// Entries the user pinned, with their notes.
+    pub pins: &'a [Pin],
 }
 
 /// Stack frames shown per problem; the rest is summarized.
@@ -89,6 +92,8 @@ pub fn render_report(input: &ReportInput<'_>, style: ReportStyle) -> String {
             out.para(&format!("{} {}", out.bold("Tags:"), tags.join(" ")));
         }
     }
+
+    pinned_section(&mut out, doc, input.pins);
 
     // Counts
     let c = doc.counts();
@@ -222,6 +227,32 @@ pub fn render_report(input: &ReportInput<'_>, style: ReportStyle) -> String {
         doc.line_count()
     ));
     out.finish()
+}
+
+/// "Pinned entries": what the user marked as worth a look, with their notes.
+fn pinned_section(out: &mut Out, doc: &LogDocument, pins: &[Pin]) {
+    let pinned: Vec<(&Pin, &LogEntry)> = pins
+        .iter()
+        .filter_map(|pin| Some((pin, doc.entry_starting_at(pin.line)?)))
+        .collect();
+    if pinned.is_empty() {
+        return;
+    }
+    out.h2("Pinned entries");
+    for (pin, entry) in pinned {
+        let message = crate::markup::plain(&entry.message);
+        let headline = message.lines().next().unwrap_or_default().trim();
+        let mut line = format!(
+            "Line {} {} {}",
+            pin.line,
+            severity_icon(entry.severity),
+            code(headline)
+        );
+        if !pin.note.trim().is_empty() {
+            line.push_str(&format!(": {}", pin.note.trim()));
+        }
+        out.bullet(&line);
+    }
 }
 
 fn problem_details(out: &mut Out, doc: &LogDocument, entry: &LogEntry) {
@@ -574,6 +605,10 @@ mod tests {
                 generated_at: "2026-11-09 14:05",
                 comparison: None,
                 max_problems: 5,
+                pins: &[Pin {
+                    line: 2,
+                    note: "starts here".to_owned(),
+                }],
             },
             style,
         )
@@ -595,6 +630,9 @@ mod tests {
             "```\nNullReferenceException: a | b *c*\n  … 1 engine/package frame\n  at Gun.Stop() (Assets/Gun.cs:9)\n  … 2 engine/package frames\n```"
         ));
         assert!(md.contains("- Play mode #1: 1 error, 0 warnings"));
+        assert!(md.contains(
+            "## Pinned entries\n\n- Line 2 ⛔ `NullReferenceException: a | b *c*`: starts here\n"
+        ));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //! same redaction as saved sessions.
 
 use comte_core::{
-    Comparison, RedactionReport, Redactor, ReportInput, ReportStyle, parse_tags, render_report,
+    Comparison, Pin, RedactionReport, Redactor, ReportInput, ReportStyle, parse_tags, render_report,
 };
 
 use crate::loader::Loaded;
@@ -17,6 +17,8 @@ pub struct ReportOptions {
     pub redact: bool,
     pub include_comparison: bool,
     pub max_problems: usize,
+    /// Pins of the open log, listed under "Pinned entries".
+    pub pins: Vec<Pin>,
 }
 
 impl Default for ReportOptions {
@@ -28,6 +30,7 @@ impl Default for ReportOptions {
             redact: true,
             include_comparison: true,
             max_problems: 5,
+            pins: Vec::new(),
         }
     }
 }
@@ -58,6 +61,7 @@ pub fn build_report(
             generated_at,
             comparison: comparison.filter(|_| options.include_comparison),
             max_problems: options.max_problems,
+            pins: &options.pins,
         },
         options.style,
     );

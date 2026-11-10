@@ -17,7 +17,8 @@
 //! - `COMTE_NO_DISCOVERY=1`: don't list this machine's logs (clean screenshots).
 //! - `COMTE_COPY=summary|lines|message`: copy that to the clipboard after loading
 //!   (`lines`/`message` use the selected entry).
-//! - `COMTE_BOOKMARK=12,40`: bookmark the entries starting on these lines after loading.
+//! - `COMTE_PIN=12:note here,40`: pin the entries starting on these lines after
+//!   loading, with an optional note after `:`.
 //! - `COMTE_REPORT=1`: open the report dialog after loading (`=slack` for Slack style).
 //! - `COMTE_IDE_DRY_RUN=1`: print the editor command instead of starting it;
 //!   `COMTE_OPEN=1` opens the selected entry's location after loading.
@@ -50,7 +51,7 @@ pub struct DevHooks {
     pub settings_open: bool,
     pub no_discovery: bool,
     pub copy: Option<String>,
-    pub bookmarks: Vec<usize>,
+    pub pins: Vec<(usize, String)>,
     pub report: bool,
     pub report_slack: bool,
     pub ide_dry_run: bool,
@@ -80,8 +81,15 @@ impl DevHooks {
             settings_open: var("COMTE_SETTINGS_OPEN").as_deref() == Some("1"),
             no_discovery: var("COMTE_NO_DISCOVERY").as_deref() == Some("1"),
             copy: var("COMTE_COPY"),
-            bookmarks: var("COMTE_BOOKMARK")
-                .map(|v| v.split(',').filter_map(|l| l.trim().parse().ok()).collect())
+            pins: var("COMTE_PIN")
+                .map(|v| {
+                    v.split(',')
+                        .filter_map(|pin| {
+                            let (line, note) = pin.split_once(':').unwrap_or((pin, ""));
+                            Some((line.trim().parse().ok()?, note.trim().to_owned()))
+                        })
+                        .collect()
+                })
                 .unwrap_or_default(),
             report: var("COMTE_REPORT").is_some(),
             report_slack: var("COMTE_REPORT").as_deref() == Some("slack"),

@@ -47,7 +47,7 @@ pub use reader::{LineReader, parse_file, parse_reader, read_head};
 pub use redact::{RedactionReport, Redactor, redact_lines};
 pub use report::{ReportInput, ReportStyle, render_report};
 pub use session::{
-    SessionContent, SessionHeader, kind_token, parse_header, parse_kind_token, parse_tags,
+    Pin, SessionContent, SessionHeader, kind_token, parse_header, parse_kind_token, parse_tags,
     write_session,
 };
 pub use source::{EngineId, LogKind, LogSource, SourceRole};

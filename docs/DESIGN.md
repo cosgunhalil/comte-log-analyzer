@@ -287,6 +287,9 @@ Original plan:
 # --- note -----------------------------------------------------
 # > Crashes when Steam is not running. Repro: start the game from
 # > the Epic launcher with Steam closed.
+# --- pins -----------------------------------------------------
+# @ 412  last thing before the crash
+# @ 388
 # ==============================================================
 <log content: the original lines, unchanged apart from redaction>
 ```
@@ -294,6 +297,7 @@ Original plan:
 - **Content**: the full log, or only the entries you can currently see (written as their original lines, so the file is still a valid log).
 - Comte Logger reads the header back when you reopen the file, restoring the note, tags and kind (no detection needed). Line numbers in a reopened session count from the first log line after the header.
 - Note lines are written as `# > text`, so a note can never end the header early. The header also records `source_path`, which is redacted too.
+- **Pins** are written as `# @ <line>  <note>`, with line numbers counted in the saved body. In a filtered save they are renumbered to the saved lines, and pins on left-out lines are dropped. Pin notes are redacted like everything else. Reopening the file restores the pins and their notes.
 - Default folder: `Documents\ComteLogger\sessions\<yyyy-MM-dd_HH-mm>_<title>.log`. `Documents` comes from the Windows known-folder API, so OneDrive redirection works. A different folder can be chosen in Settings (M12).
 - **Save dialog** (toolbar or Ctrl+S): note, tags, whole log or only the entries matching the current filters, Redact on or off, an "Also redact" field for your own words, and a live preview ("106 values will be replaced: 89 user names, 5 tokens, …").
 - The left panel lists the sessions saved in the default folder, with their tags and the note's first line as a tooltip. A reopened session shows a card with its note, tags, origin and redaction status. Saving it again keeps the note and tags.
@@ -332,11 +336,12 @@ A short report to paste into Jira, Slack or a pull request, built by `comte-core
   1. Title and meta line (kind, Unity version, lines, when it was generated).
   2. The verdict as a quote.
   3. Note and tags.
-  4. Problem counts.
-  5. The **top N problems** (default 5), worst first, then most frequent. Each has where it happened, its section path, its first line, and a code block with the message, its detail lines and a **trimmed stack**: your frames with paths, engine and package runs summarized ("… 3 engine/package frames"), at most about 8 lines.
-  6. "…and N more problems".
-  7. **Changes since A**, when a comparison is open and included.
-  8. Timings table, environment table, timeline.
+  4. **Pinned entries**: line, severity, the message's first line and the pin's note.
+  5. Problem counts.
+  6. The **top N problems** (default 5), worst first, then most frequent. Each has where it happened, its section path, its first line, and a code block with the message, its detail lines and a **trimmed stack**: your frames with paths, engine and package runs summarized ("… 3 engine/package frames"), at most about 8 lines.
+  7. "…and N more problems".
+  8. **Changes since A**, when a comparison is open and included.
+  9. Timings table, environment table, timeline.
 - **Two styles:**
   - **Markdown** (headings and tables) for Jira, GitHub and Confluence.
   - **Slack**: Slack's mrkdwn has no headings or tables, so headings become bold lines and tables become bullet lines.
@@ -429,33 +434,37 @@ A short report to paste into Jira, Slack or a pull request, built by `comte-core
 - Loading runs on a background thread (`std::sync::mpsc`; crossbeam was not needed). Only the latest request's result is shown.
 - **Dev hooks** (`COMTE_SCREENSHOT=out.png`, `COMTE_SELECT=problem`, `COMTE_SEARCH=…`, `COMTE_NOISE=1`) let the UI screenshot itself in a given state and quit, for automated visual checks.
 - The list is virtualized (only visible rows are drawn), so it stays fast on very large logs.
-- Keyboard:
-  - `Ctrl+F` search; `Enter` / `Shift+Enter` or `F3` / `Shift+F3` for the next or previous match; `Esc` in the search box clears it.
-  - `F8` / `Shift+F8` next or previous problem (this opens collapsed sections).
+- Keyboard. Single letters are used for list actions, so they're easy to remember, and they only act while no text box has focus:
+  - `N` / `Shift+N` next or previous problem; this opens collapsed sections. `F8` / `Shift+F8` do the same for people used to it from code editors.
+  - `]` / `[` next or previous top-level section (Startup, Script compilation, Play mode #n, …), counted from the selection.
+  - `E` / `W` / `I` toggle the **E**rrors / **W**arnings / **I**nfo buttons.
+  - `P` pins the selected entry or unpins it; `Alt+↓` / `Alt+↑` go to the next or previous pin, wrapping around.
   - `↑` / `↓` move the selection, `Home` / `End` jump to the first or last entry, `Esc` clears it.
-  - `1` / `2` / `3` toggle the errors / warnings / info buttons, in their on-screen order (only while no text box has focus).
   - `Ctrl+Shift+C` copies the selected entry's original lines. Plain `Ctrl+C` is left for copying text you've selected in the details.
-  - `B` bookmarks the selected entry or removes its bookmark; `F2` / `Shift+F2` go to the next or previous bookmark, wrapping around.
+  - `Ctrl+F` search; `Enter` / `Shift+Enter` or `F3` / `Shift+F3` for the next or previous match; `Esc` in the search box clears it.
   - `F5` reloads, `Ctrl+O` opens a file, `Ctrl+S` saves the session (M6).
+  - egui ignores extra Shift and Alt when matching a shortcut, so the more specific one (`Shift+N`, `Alt+↓`) is always checked first.
 - **Copying:**
   - The details panel has **📋 Copy lines** (the original lines, exactly as in the log), **Copy message** (without rich-text tags) and **Copy reference** (`Editor.log:120 [Error] first line of the message`, to point a teammate at it).
   - Right-clicking a row offers the same, plus "Open in editor".
   - The overview's **📋 Copy summary** copies the log's title, verdict, problem counts, environment facts and line count as plain text for a bug report, redacted like reports.
   - The status bar confirms what was copied. `COMTE_COPY=summary|lines|message` triggers a copy for automated checks.
-- **Bookmarks** (`comte-app::bookmarks`):
-  - Set with `B`, the 🔖 button in the details or the row's right-click menu. Bookmarked rows show 🔖 before the message.
-  - Stored as the entry's first line number per file, not its id, so they survive a reload of the same file and live-tail updates (lines are only appended). When live tail sees the file replaced (Unity restarted), that file's bookmarks are cleared.
-  - Listed under **BOOKMARKS** in the left panel (click to go there, right-click to remove).
-  - Kept only while the app runs; saved sessions don't store them yet.
-  - `COMTE_BOOKMARK=75,98` bookmarks the entries starting on those lines, for automated checks.
-- **Minimap** (`comte-app::minimap`):
-  - A 14 px strip to the right of the list. Errors and warnings are drawn on its left half, bookmarks (blue) and search matches (yellow, highlight-only search) on its right half. A frame shows the part of the list on screen.
-  - Marks are placed by row, so they line up with what the list shows, whatever is filtered or collapsed. A collapsed section header gets the error or warning mark of what it hides; section titles that match the search get a match mark.
-  - Click near a mark to select that entry; click elsewhere or drag to scroll there.
-  - Right-click to choose which kinds of marks it shows (saved in settings as `[minimap]`).
+- **Pins** (`comte-app::pins`): entries you want to come back to, each with a note ("the save breaks here"). They are part of the "save logs with notes" idea, not just markers.
+  - Pin with `P`, the **📌 Pin** button in the details or the row's right-click menu. Pinned rows show 📌 before the message.
+  - A pinned entry's details have a note field. The note is saved with the session and shown in reports.
+  - Listed under **PINS** in the left panel, colored by severity. A pin's note is shown instead of the message when it has one. Click to go there, right-click to unpin.
+  - Stored as the entry's first line number per file, not its id, so they survive a reload of the same file and live-tail updates (lines are only appended). When live tail sees the file replaced (Unity restarted), that file's pins are cleared.
+  - Saved in the session header (§6.1) and listed in reports as **Pinned entries** (§6.3); reopening a session restores them.
+  - `COMTE_PIN=75:a note,98` pins the entries starting on those lines (with optional notes), for automated checks.
+- **Timeline strip** (`comte-app::strip`): an 18 px strip to the right of the list that shows the log's shape.
+  - **Bands** are the top-level sections, tinted by their worst problem (red for errors, amber for warnings, alternating greys otherwise). Rows outside any section get no band.
+  - **Ticks:** errors and warnings on the left half; pins (diamonds) and search matches (yellow, while the search only highlights) on the right half. A frame shows the part of the list on screen.
+  - Everything is placed by row, so it lines up with what the list shows, whatever is filtered or collapsed. A collapsed section header gets the tick of the worst problem it hides; section titles that match the search get a match tick.
+  - Hover a band for the section's name, duration and counts. Click a band to go to its header, click a tick to select its entry, drag to scroll.
+  - The legend under the list (Sections · Problems · Pins · Matches) turns each layer on or off; the choice is saved in settings as `[strip]`.
 - **Search** (`comte-app::search`):
   - **Words:** every word must appear somewhere in the entry (message without rich-text tags, details, stack frames, `file:line`), in any field and any order. `"a phrase"` keeps words together and in order, and `-word` / `-"a phrase"` excludes.
-  - **Toggles:** **Aa** matches case, **.*** treats the whole text as one regular expression, and **▽** switches between hiding entries that don't match (the default) and only highlighting matches.
+  - **Toggles:** **Aa** matches case, **.*** treats the whole text as one regular expression, and **Hide others | Highlight** chooses between showing only matching entries (the default) and showing everything with matches highlighted (and marked on the timeline strip).
   - **Matching:** words compile to escaped, case-insensitive regexes, so matching and highlighting always agree on byte ranges, even for non-ASCII text.
   - **Invalid regex:** an unfinished or invalid regex shows its error and hides nothing, so the list doesn't go blank while you type.
   - **Highlighting:** matches are highlighted in entry rows, section titles, the details message, detail lines and stack frames.

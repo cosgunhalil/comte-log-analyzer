@@ -215,6 +215,11 @@ pub fn report(path: &Path, slack: bool, redact: bool) -> std::io::Result<()> {
             .as_ref()
             .map(|s| s.tags.join(", "))
             .unwrap_or_default(),
+        pins: loaded
+            .session
+            .as_ref()
+            .map(|s| s.pins.clone())
+            .unwrap_or_default(),
         redact,
         ..Default::default()
     };

@@ -14,12 +14,15 @@
 //! # tags:          crash, steam
 //! # --- note -----------------------------------------------------
 //! # > Crashes when Steam is not running.
+//! # --- pins -----------------------------------------------------
+//! # @ 120  the save breaks here
 //! # ==============================================================
 //! <original log lines>
 //! ```
 //!
 //! Any text editor can read it; Comte Logger reads the header back on open.
 //! Note lines are prefixed with `# > ` so a note can never end the header early.
+//! Pins are `# @ <line>  <note>`, with line numbers counted in the body.
 
 use std::io::{self, Write};
 
@@ -29,6 +32,8 @@ const OPENING: &str = "# ==== Comte Logger session ";
 const NOTE_MARKER: &str = "# --- note ";
 const CLOSING: &str = "# ======";
 const NOTE_PREFIX: &str = "# > ";
+const PINS_MARKER: &str = "# --- pins ";
+const PIN_PREFIX: &str = "# @ ";
 const RULE_WIDTH: usize = 64;
 
 /// What a saved file contains.
@@ -57,6 +62,16 @@ pub struct SessionHeader {
     /// `Some(n)` when `n` sensitive values were replaced before saving.
     pub redacted: Option<usize>,
     pub tags: Vec<String>,
+    pub note: String,
+    /// Pinned entries, by body line number, in order.
+    pub pins: Vec<Pin>,
+}
+
+/// An entry someone pinned, with an optional note ("the save breaks here").
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Pin {
+    /// The entry's first line (1-based).
+    pub line: usize,
     pub note: String,
 }
 
@@ -131,6 +146,17 @@ pub fn write_session<'a>(
     for line in header.note.lines() {
         writeln!(out, "{NOTE_PREFIX}{}", line.trim_end())?;
     }
+    if !header.pins.is_empty() {
+        let pins_rule = format!(
+            "{PINS_MARKER}{}",
+            "-".repeat(RULE_WIDTH - PINS_MARKER.len())
+        );
+        writeln!(out, "{pins_rule}")?;
+        for pin in &header.pins {
+            let line = format!("{PIN_PREFIX}{}  {}", pin.line, single_line(&pin.note));
+            writeln!(out, "{}", line.trim_end())?;
+        }
+    }
     writeln!(out, "# {}", "=".repeat(RULE_WIDTH - 2))?;
     for line in lines {
         writeln!(out, "{line}")?;
@@ -152,6 +178,7 @@ pub fn parse_header<S: AsRef<str>>(lines: &[S]) -> Option<(SessionHeader, usize)
     }
     let mut header = SessionHeader::default();
     let mut in_note = false;
+    let mut in_pins = false;
     let mut note: Vec<&str> = Vec::new();
     for (index, line) in lines.iter().enumerate().skip(1) {
         let line = line.as_ref();
@@ -161,6 +188,21 @@ pub fn parse_header<S: AsRef<str>>(lines: &[S]) -> Option<(SessionHeader, usize)
         }
         if line.starts_with(NOTE_MARKER) {
             in_note = true;
+            continue;
+        }
+        if line.starts_with(PINS_MARKER) {
+            (in_note, in_pins) = (false, true);
+            continue;
+        }
+        if in_pins {
+            let pin = line.strip_prefix(PIN_PREFIX).and_then(|rest| {
+                let (number, note) = rest.split_once(' ').unwrap_or((rest, ""));
+                Some(Pin {
+                    line: number.parse().ok()?,
+                    note: note.trim().to_owned(),
+                })
+            });
+            header.pins.extend(pin);
             continue;
         }
         if in_note {
@@ -230,6 +272,16 @@ mod tests {
             note:
                 "Crashes when Steam is not running.\n\n# ===== not the end\nRepro: start from Epic."
                     .to_owned(),
+            pins: vec![
+                Pin {
+                    line: 2,
+                    note: "unloads too early".to_owned(),
+                },
+                Pin {
+                    line: 1,
+                    note: String::new(),
+                },
+            ],
         }
     }
 
@@ -268,6 +320,7 @@ mod tests {
         assert!(text.contains("# kind:          unity-player\n"));
         assert!(text.contains("# redacted:      yes (12 values)\n"));
         assert!(text.contains("# > Crashes when Steam is not running.\n"));
+        assert!(text.contains("# @ 2  unloads too early\n# @ 1\n"));
         assert!(
             text.lines()
                 .all(|l| l.chars().count() <= 80 || !l.starts_with("# =="))
@@ -282,6 +335,7 @@ mod tests {
             tags: Vec::new(),
             note: String::new(),
             engine_version: None,
+            pins: Vec::new(),
             ..sample()
         };
         let text = render(&header, &["a"]);

@@ -22,6 +22,7 @@ fn report(name: &str, parser: &mut dyn LogParser, style: ReportStyle) -> String 
             generated_at: "2026-11-09 14:05",
             comparison: None,
             max_problems: 3,
+            pins: &[],
         },
         style,
     )
