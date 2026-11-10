@@ -1,6 +1,6 @@
 //! [`LogDocument`]: the parsed, navigable form of a log.
 
-use crate::activity::{AssetImport, BuildReport, Hint, Unfinished};
+use crate::activity::{AssetImport, BuildReport, Hint, ReloadProfile, Unfinished};
 use crate::fingerprint;
 use crate::model::{Fact, FactKey, LogEntry, Metric, Section, SeverityCounts};
 use crate::parser::ParseEvent;
@@ -20,6 +20,7 @@ pub struct LogDocument {
     build_reports: Vec<BuildReport>,
     unfinished: Option<Unfinished>,
     hints: Vec<Hint>,
+    reload_profiles: Vec<ReloadProfile>,
     counts: SeverityCounts,
     /// Stack of currently open section ids, innermost last.
     open_sections: Vec<u32>,
@@ -64,6 +65,7 @@ impl LogDocument {
             ParseEvent::Import(import) => self.imports.push(import),
             ParseEvent::BuildReport(report) => self.build_reports.push(report),
             ParseEvent::Unfinished(unfinished) => self.unfinished = Some(unfinished),
+            ParseEvent::ReloadProfile(profile) => self.reload_profiles.push(profile),
             ParseEvent::Hint(hint) => {
                 self.hints.push(hint);
                 self.hints.sort_by_key(|h| h.line);
@@ -178,6 +180,11 @@ impl LogDocument {
     /// What was still running when the log ends, if anything.
     pub fn unfinished(&self) -> Option<&Unfinished> {
         self.unfinished.as_ref()
+    }
+
+    /// Domain reload breakdowns, in log order.
+    pub fn reload_profiles(&self) -> &[ReloadProfile] {
+        &self.reload_profiles
     }
 
     /// Known problems recognized in the log, in line order.

@@ -67,6 +67,14 @@ Save failed: disk quota exceeded for slot 2
 | Asset refresh | 2 | 3.54 s | 1.77 s | 3.53 s |
 | Scene load | 3 | 641 ms | 214 ms | 412 ms |
 
+## Where domain reload time goes
+
+| Step | Per reload |
+|---|---|
+| FinalizeReload | 1.19 s |
+| BeginReloadAssembly | 281 ms |
+| LoadAllAssembliesAndSetupDomain | 87 ms |
+
 ## Environment
 
 | Fact | Value |

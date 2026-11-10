@@ -297,6 +297,16 @@ Built as `comte-core::insights::Insights::of(&doc)`, computed once per load or l
 - **Most repeated messages:** your own logs, excluding engine chatter and the app's summaries (those are operations, covered by timings).
 - **Slowest operations:** the top 8 timed operations as bars.
 - **Timings table:** count, total, average and slowest per kind.
+- **Trends** (`comte-app::history`):
+  - **Stored:** per Editor session, the count, median and slowest domain reload, script compile and asset refresh. They go in `timings.toml` next to `settings.toml`, keyed by project path and the log's start date, so reopening a log or a session made from it doesn't count twice. Up to 40 sessions are kept per project.
+  - **Recorded when:** a log loads, and on live updates whenever the metrics change. `Editor-prev.log` is read once per run in the background, so there is something to compare with from the first day.
+  - **Shown:** each kind as a sparkline of session medians (this session last), with "1.82 s now, 43% slower than your last 4 sessions (1.28 s)". It is compared with the median of up to 10 earlier sessions. It is marked ⚠ when it is at least 20% slower with at least 3 earlier sessions; with fewer it is just information.
+  - **Within one session:** when the last third of the reloads is at least 25% slower than the first third, the overview warns that reloads got slower during the session. Leaked editor state is the usual cause.
+- **Where domain reload time goes:**
+  - **Source:** Unity's `Domain Reload Profiling` tree (tab-indented `Name (Nms)` lines) becomes a `ReloadProfile` per reload.
+  - **Shown:** the costliest leaf steps (steps without sub-steps), averaged over the reloads, as bars with plain names: "[InitializeOnLoad] classes: static constructors in your scripts and packages", "loading the compiled assemblies", …
+  - **✎ marks steps that run the project's code:** `ProcessInitializeOnLoadAttributes`, `…MethodAttributes`, `DisableScriptedObjects` and `AwakeInstancesAfterBackupRestoration`. Those are the ones you can make faster.
+  - Reports list the top 4.
 - **Slowest imports:** the top 10 asset imports as bars, with the number of imports and their total time. Hover for the full path, click to go to the import.
 - **Build size:** from the latest build report, the complete build size, your assets' size, categories and the 8 largest assets as bars.
 - **Huge-log notice** (when only the end of the file was read): the file size, how much is shown, and `Insights::loudest`, the most repeated message of any kind, engine chatter included, which is usually what filled the file.

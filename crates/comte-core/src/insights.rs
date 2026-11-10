@@ -13,6 +13,18 @@ use crate::model::{Category, LogEntry, MetricKind, MetricValue, SectionKind, Sev
 const TOP_REPEATED: usize = 5;
 const TOP_SLOWEST: usize = 8;
 const TOP_IMPORTS: usize = 10;
+const TOP_PHASES: usize = 6;
+
+/// One domain reload step, added up over every reload in the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhaseTotal {
+    pub name: String,
+    pub about: Option<String>,
+    pub your_code: bool,
+    pub total: Duration,
+    /// Per reload (over the reloads that had a breakdown).
+    pub average: Duration,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerdictKind {
@@ -93,6 +105,8 @@ pub struct Insights {
     /// The most repeated message of any kind, engine chatter included: what
     /// fills a runaway log.
     pub loudest: Option<Repeated>,
+    /// Where domain reload time goes: the costliest leaf steps, costliest first.
+    pub reload_phases: Vec<PhaseTotal>,
 }
 
 impl Insights {
@@ -122,6 +136,7 @@ impl Insights {
             slowest_imports,
             imports,
             loudest: repeated(doc, |_| true, 2).into_iter().next(),
+            reload_phases: reload_phases(doc),
         }
     }
 }
@@ -233,6 +248,31 @@ fn verdict(doc: &LogDocument) -> Verdict {
         details: Vec::new(),
         entry: None,
     }
+}
+
+fn reload_phases(doc: &LogDocument) -> Vec<PhaseTotal> {
+    let profiles = doc.reload_profiles();
+    let mut totals: Vec<PhaseTotal> = Vec::new();
+    for phase in profiles.iter().flat_map(|p| p.leaves()) {
+        match totals.iter_mut().find(|t| t.name == phase.name) {
+            Some(total) => total.total += phase.duration,
+            None => totals.push(PhaseTotal {
+                name: phase.name.clone(),
+                about: phase.about.clone(),
+                your_code: phase.your_code,
+                total: phase.duration,
+                average: Duration::ZERO,
+            }),
+        }
+    }
+    let reloads = u32::try_from(profiles.len().max(1)).unwrap_or(u32::MAX);
+    for total in &mut totals {
+        total.average = total.total / reloads;
+    }
+    totals.retain(|t| !t.total.is_zero());
+    totals.sort_by_key(|t| std::cmp::Reverse(t.total));
+    totals.truncate(TOP_PHASES);
+    totals
 }
 
 fn stopped_verdict(doc: &LogDocument, unfinished: &Unfinished) -> Verdict {

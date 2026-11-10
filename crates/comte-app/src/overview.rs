@@ -11,6 +11,7 @@ use comte_core::{
 };
 use eframe::egui::{self, Color32, RichText, Sense, Ui, vec2};
 
+use crate::history::{Trend, creep};
 use crate::loader::Loaded;
 use crate::theme::{severity_color, severity_icon};
 
@@ -108,7 +109,7 @@ pub fn hint_card(
     action
 }
 
-pub fn overview(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
+pub fn overview(ui: &mut Ui, current: &Loaded, trends: &[Trend]) -> Option<Jump> {
     let mut jump = None;
     if let Some(session) = &current.session {
         session_card(ui, session);
@@ -159,6 +160,16 @@ pub fn overview(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
     if !insights.slowest.is_empty() {
         heading(ui, "Slowest operations");
         jump = jump.or(slowest_bars(ui, insights));
+    }
+
+    if !trends.is_empty() || reload_creep(current).is_some() {
+        heading(ui, "Trends");
+        trends_ui(ui, current, trends);
+    }
+
+    if !insights.reload_phases.is_empty() {
+        heading(ui, "Where domain reload time goes");
+        reload_phases_ui(ui, current);
     }
 
     if !insights.slowest_imports.is_empty() {
@@ -466,6 +477,132 @@ fn repeated_list(ui: &mut Ui, items: &[Repeated]) -> Option<Jump> {
         }
     }
     jump
+}
+
+/// Domain reloads getting slower within this session.
+fn reload_creep(current: &Loaded) -> Option<(Duration, Duration)> {
+    let reloads: Vec<Duration> = current
+        .doc
+        .metrics()
+        .iter()
+        .filter(|m| m.kind == comte_core::MetricKind::DomainReload)
+        .filter_map(|m| m.as_duration())
+        .collect();
+    creep(&reloads)
+}
+
+fn trends_ui(ui: &mut Ui, current: &Loaded, trends: &[Trend]) {
+    let visuals = ui.visuals().clone();
+    for trend in trends {
+        ui.horizontal(|ui| {
+            let color = if trend.slower {
+                visuals.warn_fg_color
+            } else {
+                visuals.text_color()
+            };
+            ui.label(RichText::new(trend.kind.label()).color(color));
+            sparkline(ui, &trend.series, color);
+            let text = format!("{} now, {}", format_duration(trend.now), trend.sentence());
+            let text = if trend.slower {
+                RichText::new(format!("⚠ {text}")).color(color).strong()
+            } else {
+                RichText::new(text).weak()
+            };
+            ui.label(text).on_hover_text(
+                "Median per session, this session last. Kept per project in timings.toml \
+                 next to the settings.",
+            );
+        });
+    }
+    if let Some((first, last)) = reload_creep(current) {
+        ui.label(
+            RichText::new(format!(
+                "⚠ Domain reloads got slower during this session: {} at first, {} lately. \
+                 Leaked editor state (static lists, event handlers added on every reload) \
+                 is a common cause.",
+                format_duration(first),
+                format_duration(last)
+            ))
+            .color(visuals.warn_fg_color),
+        );
+    }
+}
+
+/// Tiny bars, one per session, the last one (this session) highlighted.
+fn sparkline(ui: &mut Ui, series: &[Duration], color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(90.0, 16.0), Sense::hover());
+    let painter = ui.painter_at(rect);
+    let max = series
+        .iter()
+        .max()
+        .copied()
+        .unwrap_or_default()
+        .as_secs_f32()
+        .max(0.001);
+    let n = series.len().max(1) as f32;
+    let width = rect.width() / n;
+    for (i, d) in series.iter().enumerate() {
+        let h = (d.as_secs_f32() / max * rect.height()).max(1.5);
+        let x = rect.left() + i as f32 * width;
+        let bar = egui::Rect::from_min_max(
+            egui::pos2(x + 1.0, rect.bottom() - h),
+            egui::pos2(x + width - 1.0, rect.bottom()),
+        );
+        let last = i + 1 == series.len();
+        let fill = if last {
+            color
+        } else {
+            ui.visuals().weak_text_color().gamma_multiply(0.6)
+        };
+        painter.rect_filled(bar, 1.0, fill);
+    }
+}
+
+fn reload_phases_ui(ui: &mut Ui, current: &Loaded) {
+    let phases = &current.insights.reload_phases;
+    let reloads = current.doc.reload_profiles().len();
+    ui.label(
+        RichText::new(format!(
+            "Average per reload, over {reloads} {}",
+            if reloads == 1 { "reload" } else { "reloads" }
+        ))
+        .weak()
+        .small(),
+    );
+    let longest = phases
+        .first()
+        .map_or(Duration::from_millis(1), |p| p.average)
+        .max(Duration::from_millis(1));
+    for phase in phases {
+        let label = match (&phase.about, phase.your_code) {
+            (Some(about), true) => format!("✎ {about}"),
+            (Some(about), false) => about.clone(),
+            (None, _) => phase.name.clone(),
+        };
+        let tip = if phase.your_code {
+            format!(
+                "{}\nRuns your code (and your packages'). Total {}",
+                phase.name,
+                format_duration(phase.total)
+            )
+        } else {
+            format!("{}\nTotal {}", phase.name, format_duration(phase.total))
+        };
+        bar_row(
+            ui,
+            &label,
+            phase.average.as_secs_f32() / longest.as_secs_f32(),
+            &format_duration(phase.average),
+        )
+        .on_hover_text(tip);
+    }
+    if phases.iter().any(|p| p.your_code) {
+        ui.label(
+            RichText::new("✎ = runs your scripts' (and packages') code, which you can make faster")
+                .weak()
+                .small(),
+        );
+    }
 }
 
 fn slowest_imports(ui: &mut Ui, current: &Loaded) -> Option<Jump> {

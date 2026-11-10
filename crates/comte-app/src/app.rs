@@ -25,6 +25,7 @@ use crate::cli::{age, human_size};
 use crate::compare_view::{CompareAction, CompareView, compare_ui, previous_run};
 use crate::devtools::DevHooks;
 use crate::engines::discover_sources;
+use crate::history::{SessionTimings, TimingHistory, Trend};
 use crate::ide::{
     self, DetectedIde, IdeChoice, Launch, custom_launch, detect_ides, launch_for, resolve_source,
     system_launch,
@@ -96,6 +97,16 @@ pub struct ComteApp {
     pins: Pins,
     /// The timeline strip for the current rows (rebuilt with them).
     strip: StripData,
+    /// Timings of earlier sessions, per project (for trends).
+    history: TimingHistory,
+    /// Trends of the current log against its project's history.
+    trends: Vec<Trend>,
+    /// What the trends were computed for: (path, metrics count).
+    trends_for: Option<(PathBuf, usize)>,
+    /// `Editor-prev.log` files already read for their timings this run.
+    prev_read: HashSet<PathBuf>,
+    /// Timings of a previous-run log being read in the background.
+    prev_rx: Option<std::sync::mpsc::Receiver<SessionTimings>>,
     /// The section header row ] / [ went to last (with nothing selected).
     last_section_row: Option<usize>,
     /// Scroll the list to this row (after a strip click).
@@ -180,6 +191,11 @@ impl ComteApp {
             pins: Pins::default(),
             strip: StripData::default(),
             last_section_row: None,
+            history: TimingHistory::load(),
+            trends: Vec::new(),
+            trends_for: None,
+            prev_read: HashSet::new(),
+            prev_rx: None,
             scroll_to_row: None,
             dev,
         };
@@ -201,6 +217,60 @@ impl ComteApp {
             app.loader.start(path, title, &cc.egui_ctx);
         }
         app
+    }
+
+    // -- timing history -------------------------------------------------------
+
+    /// Records the current log's timings and recomputes its trends, when the
+    /// log (or its metrics, during live tail) changed.
+    fn update_timings(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.prev_rx
+            && let Ok(timings) = rx.try_recv()
+        {
+            self.prev_rx = None;
+            if self.history.record(timings) {
+                self.history.save();
+            }
+            self.trends_for = None; // recompute with the earlier session
+        }
+        let Some(current) = &self.current else {
+            self.trends.clear();
+            self.trends_for = None;
+            return;
+        };
+        let key = (current.path.clone(), current.doc.metrics().len());
+        if self.trends_for.as_ref() == Some(&key) {
+            return;
+        }
+        self.trends_for = Some(key);
+        let Some(timings) = SessionTimings::of(&current.doc) else {
+            self.trends.clear();
+            return;
+        };
+        if self.history.record(timings.clone()) {
+            self.history.save();
+        }
+        self.trends = self.history.trends(&timings);
+        // The previous run is the first thing to compare with: read it once.
+        let prev = current.path.with_file_name("Editor-prev.log");
+        if current.session.is_none()
+            && current.path.file_name().is_some_and(|n| n == "Editor.log")
+            && prev.is_file()
+            && self.prev_read.insert(prev.clone())
+        {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let ctx = ctx.clone();
+            std::thread::spawn(move || {
+                if let Some(timings) = crate::loader::load(&prev, "Editor-prev.log")
+                    .ok()
+                    .and_then(|l| SessionTimings::of(&l.doc))
+                {
+                    let _ = tx.send(timings);
+                    ctx.request_repaint();
+                }
+            });
+            self.prev_rx = Some(rx);
+        }
     }
 
     fn open(&mut self, path: PathBuf, title: String, ctx: &egui::Context) {
@@ -2360,7 +2430,7 @@ impl ComteApp {
                             new_note = Some((line, note));
                         }
                     }
-                    None => jump = overview(ui, current),
+                    None => jump = overview(ui, current, &self.trends),
                 }
             });
         if back {
@@ -2432,6 +2502,7 @@ impl eframe::App for ComteApp {
         if let Some(event) = self.loader.poll() {
             self.on_loaded(event, &ctx);
         }
+        self.update_timings(&ctx);
         self.handle_input(&ctx);
         let filter_before = self.filter.clone();
 

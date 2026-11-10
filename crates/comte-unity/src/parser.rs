@@ -17,8 +17,8 @@ use std::time::Duration;
 
 use comte_core::{
     AssetImport, BuildReport, Category, Fact, FactKey, FrameKind, LogEntry, LogParser, Metric,
-    MetricKind, ParseEvent, SectionKind, SectionStart, Severity, SizeRow, SourceRef, StackFrame,
-    Unfinished, format_bytes, format_duration, parse_size,
+    MetricKind, ParseEvent, ReloadPhase, ReloadProfile, SectionKind, SectionStart, Severity,
+    SizeRow, SourceRef, StackFrame, Unfinished, format_bytes, format_duration, parse_size,
 };
 
 use crate::common::{
@@ -79,6 +79,8 @@ regex!(BUILD_TOTAL = r"^Complete (?:build )?size\s+(?P<size>[\d.]+ ?[kmgKMG]?[bB
 regex!(BUILD_ASSET = r"^\s*(?P<size>[\d.]+ ?[kmgKMG]?[bB])\s+[\d.]+%\s+(?P<path>\S.*)$");
 // `C:\Game\UnityPlayer.dll:UnityPlayer.dll (00007FFB2A6B0000), size: 28655616 (result: 0), SymType: '-exported-', PDB: ''`
 regex!(CRASH_MODULE = r"^\S.*:[^:\\/]+\.(?i:dll|exe) \([0-9A-Fa-f]+\), size: \d+");
+// `\t\tProcessInitializeOnLoadAttributes (179ms)` under `Domain Reload Profiling`.
+regex!(RELOAD_PHASE = r"^(?P<tabs>\t+)(?P<name>[A-Za-z][\w.]*) \((?P<ms>\d+)ms\)$");
 regex!(POSIX_FRAME = r"^\s*#\d+\s+(?:pc\s+)?(?:0x)?[0-9a-fA-F]+\s+(?:in\s+)?(?P<func>.+)$");
 
 /// Which Unity program wrote the log.
@@ -189,6 +191,8 @@ enum Mode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Block {
     None,
+    /// The `Domain Reload Profiling` tree.
+    ReloadProfile,
     Graphics,
     SceneLoad,
     CrashReport,
@@ -222,6 +226,8 @@ struct Pending {
     build: Option<BuildReport>,
     /// Module and symbol counts of a native crash (`Mode::Crash`).
     crash: CrashStats,
+    /// The domain reload breakdown this entry collects (`Block::ReloadProfile`).
+    profile: Option<ReloadProfile>,
     /// The crash report folder named by this entry (`Block::CrashReport`).
     crash_folder: Option<String>,
 }
@@ -240,6 +246,7 @@ impl Pending {
             build: None,
             crash: CrashStats::default(),
             crash_folder: None,
+            profile: None,
         }
     }
 
@@ -559,6 +566,9 @@ impl UnityParser {
                 p.entry.message = build_report_message(&report);
                 out.push(ParseEvent::BuildReport(report));
             }
+            if let Some(profile) = p.profile.take() {
+                out.push(ParseEvent::ReloadProfile(profile));
+            }
             if let Some(gpu) = p.gfx_gpu.take() {
                 self.gpu = Some(gpu);
             }
@@ -809,6 +819,21 @@ impl UnityParser {
                                 p.crash_folder = Some(folder.trim().to_owned());
                             }
                         }
+                        Block::ReloadProfile => {
+                            if let (Some(c), Some(profile)) =
+                                (RELOAD_PHASE.captures(text), p.profile.as_mut())
+                            {
+                                let name = c["name"].to_owned();
+                                let (about, your_code) = phase_about(&name);
+                                profile.phases.push(ReloadPhase {
+                                    depth: u8::try_from(c["tabs"].len()).unwrap_or(u8::MAX),
+                                    duration: Duration::from_millis(c["ms"].parse().unwrap_or(0)),
+                                    about: about.map(str::to_owned),
+                                    your_code,
+                                    name,
+                                });
+                            }
+                        }
                         Block::None => {}
                     }
                     p.entry.details.push(text.trim().to_owned());
@@ -1012,10 +1037,15 @@ impl UnityParser {
                 format!("Domain reload took {}", format_duration(d)),
                 n,
             );
-            self.start(
-                Pending::new(e).closing(SectionKind::DomainReload, Some(d)),
-                out,
-            );
+            let mut p = Pending::new(e)
+                .closing(SectionKind::DomainReload, Some(d))
+                .block(Block::ReloadProfile);
+            p.profile = Some(ReloadProfile {
+                line: n,
+                total: d,
+                phases: Vec::new(),
+            });
+            self.start(p, out);
             return;
         }
 
@@ -1369,6 +1399,42 @@ impl LogParser for UnityParser {
 
     fn boxed_clone(&self) -> Box<dyn LogParser> {
         Box::new(self.clone())
+    }
+}
+
+/// Plain words for Unity's domain reload steps, and whether the step runs
+/// the project's code. Unknown steps keep their engine name only.
+fn phase_about(name: &str) -> (Option<&'static str>, bool) {
+    match name {
+        "ProcessInitializeOnLoadAttributes" => (
+            Some("[InitializeOnLoad] classes: static constructors in your scripts and packages"),
+            true,
+        ),
+        "ProcessInitializeOnLoadMethodAttributes" => (
+            Some("[InitializeOnLoadMethod] methods in your scripts and packages"),
+            true,
+        ),
+        "DisableScriptedObjects" => (
+            Some("OnDisable on scripted objects before the reload"),
+            true,
+        ),
+        "AwakeInstancesAfterBackupRestoration" => (
+            Some("OnEnable / Awake on scripted objects after the reload"),
+            true,
+        ),
+        "BeforeProcessingInitializeOnLoad" => (Some("preparing [InitializeOnLoad]"), false),
+        "InitializePlatformSupportModulesInManaged" => (
+            Some("platform support modules (one per installed platform)"),
+            false,
+        ),
+        "LoadAssemblies" => (Some("loading the compiled assemblies"), false),
+        "TypeCache.ScanAssembly" => (Some("scanning assemblies for types and attributes"), false),
+        "CreateAndSetChildDomain" => (Some("creating the new script domain"), false),
+        "RebuildCommonClasses" | "RebuildNativeTypeToScriptingClass" => {
+            (Some("the engine rebinding its script classes"), false)
+        }
+        "initialDomainReloadingComplete" => (Some("the engine finishing the reload"), false),
+        _ => (None, false),
     }
 }
 
@@ -2125,6 +2191,48 @@ Cleanup mono
 
     fn doc_titles(doc: &LogDocument) -> Vec<String> {
         doc.hints().iter().map(|h| h.title.clone()).collect()
+    }
+
+    #[test]
+    fn reload_profiling_trees_become_phase_breakdowns() {
+        let tree = concat!(
+            "Begin MonoManager ReloadAssembly\n",
+            "Domain Reload Profiling: 1185ms\n",
+            "\tBeginReloadAssembly (190ms)\n",
+            "\t\tDisableScriptedObjects (20ms)\n",
+            "\t\tCreateAndSetChildDomain (14ms)\n",
+            "\tLoadAllAssembliesAndSetupDomain (242ms)\n",
+            "\t\tLoadAssemblies (171ms)\n",
+            "\t\tAnalyzeDomain (238ms)\n",
+            "\t\t\tTypeCache.Refresh (235ms)\n",
+            "\t\t\t\tTypeCache.ScanAssembly (217ms)\n",
+            "\tFinalizeReload (614ms)\n",
+            "\t\tSetupLoadedEditorAssemblies (556ms)\n",
+            "\t\t\tProcessInitializeOnLoadAttributes (400ms)\n",
+            "\t\t\tProcessInitializeOnLoadMethodAttributes (97ms)\n",
+        );
+        let doc = parse(&format!("{tree}{tree}"));
+        let profile = &doc.reload_profiles()[0];
+        assert_eq!(profile.total.as_millis(), 1185);
+        assert_eq!(profile.phases.len(), 12);
+        let leaves: Vec<&str> = profile.leaves().map(|p| p.name.as_str()).collect();
+        assert_eq!(
+            leaves,
+            [
+                "DisableScriptedObjects",
+                "CreateAndSetChildDomain",
+                "LoadAssemblies",
+                "TypeCache.ScanAssembly",
+                "ProcessInitializeOnLoadAttributes",
+                "ProcessInitializeOnLoadMethodAttributes",
+            ]
+        );
+        let insights = comte_core::Insights::of(&doc);
+        let top = &insights.reload_phases[0];
+        assert_eq!(top.name, "ProcessInitializeOnLoadAttributes");
+        assert!(top.your_code);
+        assert_eq!((top.total.as_millis(), top.average.as_millis()), (800, 400));
+        assert_eq!(doc.reload_profiles().len(), 2);
     }
 
     #[test]

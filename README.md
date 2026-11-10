@@ -53,6 +53,11 @@ paste a short report into Jira or Slack.
   something, the verdict says what: "⏳ Stopped while importing
   Assets/Hero.fbx", a domain reload or a script compile. It also says how long
   the log has been quiet, so you can tell stuck from busy.
+- **Notices when the editor gets slower.** Domain reload, compile and asset
+  refresh times are kept per project, so the overview can say "domain
+  reloads: 1.82 s now, 43% slower than your last 4 sessions". It also shows
+  where reload time goes, and marks the steps that run your own code
+  (`[InitializeOnLoad]`, `OnEnable`).
 - **Finds what is slow or big.** The slowest asset imports, and after a
   build, its size by category and its largest assets.
 - **Opens runaway logs.** Logs over 512 MB (some reach tens of gigabytes) open

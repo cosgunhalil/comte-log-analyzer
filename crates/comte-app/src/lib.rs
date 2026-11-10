@@ -11,6 +11,7 @@ mod cli;
 mod compare_view;
 mod devtools;
 mod engines;
+mod history;
 mod icon;
 mod ide;
 mod live;

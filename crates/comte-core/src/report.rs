@@ -186,6 +186,7 @@ pub fn render_report(input: &ReportInput<'_>, style: ReportStyle) -> String {
         out.table(&["Operation", "Count", "Total", "Average", "Slowest"], rows);
     }
 
+    reload_phases_section(&mut out, input.insights);
     imports_section(&mut out, input.insights);
     if let Some(build) = doc.build_reports().last() {
         build_section(&mut out, build);
@@ -249,6 +250,29 @@ fn hints_section(out: &mut Out, doc: &LogDocument) {
             out.bullet(advice);
         }
     }
+}
+
+/// Where domain reload time goes: the costliest steps, per reload.
+fn reload_phases_section(out: &mut Out, insights: &Insights) {
+    if insights.reload_phases.is_empty() {
+        return;
+    }
+    out.h2("Where domain reload time goes");
+    let rows = insights
+        .reload_phases
+        .iter()
+        .take(4)
+        .map(|p| {
+            let what = p.about.clone().unwrap_or_else(|| p.name.clone());
+            let what = if p.your_code {
+                format!("{what} (your code)")
+            } else {
+                what
+            };
+            vec![what, format_duration(p.average)]
+        })
+        .collect();
+    out.table(&["Step", "Per reload"], rows);
 }
 
 /// The slowest asset imports, when the log has any.

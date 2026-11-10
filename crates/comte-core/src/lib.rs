@@ -35,11 +35,14 @@ pub mod session;
 pub mod source;
 pub mod tail;
 
-pub use activity::{AssetImport, BuildReport, Hint, SizeRow, Unfinished, format_bytes, parse_size};
+pub use activity::{
+    AssetImport, BuildReport, Hint, ReloadPhase, ReloadProfile, SizeRow, Unfinished, format_bytes,
+    parse_size,
+};
 pub use compare::{Comparison, FactDiff, ProblemDiff, TimingDiff};
 pub use document::LogDocument;
 pub use engine::{Companion, DETECT_LINES, EngineSupport, LogLocator, detect_engine};
-pub use insights::{Insights, Repeated, Timed, TimingTotal, Verdict, VerdictKind};
+pub use insights::{Insights, PhaseTotal, Repeated, Timed, TimingTotal, Verdict, VerdictKind};
 pub use model::{
     Category, Fact, FactKey, FrameKind, LogEntry, Metric, MetricKind, MetricValue, Section,
     SectionKind, Severity, SeverityCounts, SourceRef, StackFrame, format_duration,

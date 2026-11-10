@@ -51,6 +51,42 @@ pub struct Hint {
     pub topic: String,
 }
 
+/// One step of a domain reload, from the engine's profiling tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReloadPhase {
+    /// The engine's name, e.g. `ProcessInitializeOnLoadAttributes`.
+    pub name: String,
+    /// Nesting in the tree (1 = top-level step).
+    pub depth: u8,
+    pub duration: Duration,
+    /// What the step does, in plain words, when the parser knows it.
+    pub about: Option<String>,
+    /// The step runs the project's own code (and its packages').
+    pub your_code: bool,
+}
+
+/// Where one domain reload spent its time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReloadProfile {
+    pub line: usize,
+    pub total: Duration,
+    /// In tree order.
+    pub phases: Vec<ReloadPhase>,
+}
+
+impl ReloadProfile {
+    /// Steps with no sub-steps: where the time actually goes.
+    pub fn leaves(&self) -> impl Iterator<Item = &ReloadPhase> {
+        self.phases.iter().enumerate().filter_map(|(i, phase)| {
+            let has_children = self
+                .phases
+                .get(i + 1)
+                .is_some_and(|next| next.depth > phase.depth);
+            (!has_children).then_some(phase)
+        })
+    }
+}
+
 /// One row of a size table: a category ("Textures") or an asset path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SizeRow {
