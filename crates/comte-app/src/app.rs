@@ -1703,6 +1703,18 @@ impl ComteApp {
                 counts.errors(),
                 counts.warning
             ));
+            if let Some(cut) = c.truncated {
+                ui.separator();
+                ui.label(
+                    RichText::new(format!(
+                        "📏 last {} of {}",
+                        comte_core::format_bytes(cut.shown_bytes),
+                        comte_core::format_bytes(cut.total_bytes)
+                    ))
+                    .color(ui.visuals().warn_fg_color),
+                )
+                .on_hover_text("A huge log: only its end was read. Line numbers count from there.");
+            }
             if let Some(version) = c.doc.fact(&comte_core::FactKey::EngineVersion) {
                 ui.separator();
                 ui.label(format!("Unity {version}"));

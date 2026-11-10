@@ -17,6 +17,7 @@
 //! - `COMTE_NO_DISCOVERY=1`: don't list this machine's logs (clean screenshots).
 //! - `COMTE_COPY=summary|lines|message`: copy that to the clipboard after loading
 //!   (`lines`/`message` use the selected entry).
+//! - `COMTE_HUGE_KB=16`: treat logs over 16 KB as huge (read only their end).
 //! - `COMTE_PIN=12:note here,40`: pin the entries starting on these lines after
 //!   loading, with an optional note after `:`.
 //! - `COMTE_REPORT=1`: open the report dialog after loading (`=slack` for Slack style).

@@ -1,5 +1,6 @@
 //! [`LogDocument`]: the parsed, navigable form of a log.
 
+use crate::activity::{AssetImport, BuildReport, Unfinished};
 use crate::fingerprint;
 use crate::model::{Fact, FactKey, LogEntry, Metric, Section, SeverityCounts};
 use crate::parser::ParseEvent;
@@ -15,6 +16,9 @@ pub struct LogDocument {
     sections: Vec<Section>,
     facts: Vec<Fact>,
     metrics: Vec<Metric>,
+    imports: Vec<AssetImport>,
+    build_reports: Vec<BuildReport>,
+    unfinished: Option<Unfinished>,
     counts: SeverityCounts,
     /// Stack of currently open section ids, innermost last.
     open_sections: Vec<u32>,
@@ -56,6 +60,9 @@ impl LogDocument {
             }
             ParseEvent::Fact(fact) => self.facts.push(fact),
             ParseEvent::Metric(metric) => self.metrics.push(metric),
+            ParseEvent::Import(import) => self.imports.push(import),
+            ParseEvent::BuildReport(report) => self.build_reports.push(report),
+            ParseEvent::Unfinished(unfinished) => self.unfinished = Some(unfinished),
         }
     }
 
@@ -151,6 +158,27 @@ impl LogDocument {
 
     pub fn metrics(&self) -> &[Metric] {
         &self.metrics
+    }
+
+    /// Asset imports that finished, in log order.
+    pub fn imports(&self) -> &[AssetImport] {
+        &self.imports
+    }
+
+    /// Build size reports, in log order (the last one is the latest build).
+    pub fn build_reports(&self) -> &[BuildReport] {
+        &self.build_reports
+    }
+
+    /// What was still running when the log ends, if anything.
+    pub fn unfinished(&self) -> Option<&Unfinished> {
+        self.unfinished.as_ref()
+    }
+
+    /// The entry covering `line`, if any.
+    pub fn entry_at_line(&self, line: usize) -> Option<&LogEntry> {
+        let i = self.entries.partition_point(|e| e.line_range.end <= line);
+        self.entries.get(i).filter(|e| e.line_range.contains(&line))
     }
 
     pub fn counts(&self) -> &SeverityCounts {

@@ -202,9 +202,15 @@ pub fn prepare(
             .unwrap_or_else(|| "plain".to_owned()),
         saved_at,
         engine_version: loaded.doc.fact(&FactKey::EngineVersion).map(str::to_owned),
-        content: match request.content {
-            ContentChoice::Full => SessionContent::Full,
-            ContentChoice::Visible => SessionContent::Filtered(describe_filter(filter)),
+        content: match (request.content, loaded.truncated) {
+            // "Whole log" of a huge log is only the part that was read.
+            (ContentChoice::Full, Some(cut)) => SessionContent::Filtered(format!(
+                "last {} of a {} log",
+                comte_core::format_bytes(cut.shown_bytes),
+                comte_core::format_bytes(cut.total_bytes)
+            )),
+            (ContentChoice::Full, None) => SessionContent::Full,
+            (ContentChoice::Visible, _) => SessionContent::Filtered(describe_filter(filter)),
         },
         redacted: report.as_ref().map(|r| r.total),
         tags: parse_tags(&request.tags),

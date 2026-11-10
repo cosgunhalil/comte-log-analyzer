@@ -10,6 +10,7 @@
 //! Log text always goes into code spans or code blocks, so characters like
 //! `|`, `*` or `_` in messages can't break the formatting.
 
+use crate::activity::{BuildReport, SizeRow, format_bytes};
 use crate::compare::{Comparison, ProblemDiff, format_percent};
 use crate::document::LogDocument;
 use crate::insights::{Insights, VerdictKind};
@@ -72,6 +73,7 @@ pub fn render_report(input: &ReportInput<'_>, style: ReportStyle) -> String {
     let verdict = &input.insights.verdict;
     let icon = match verdict.kind {
         VerdictKind::Crashed => "💥",
+        VerdictKind::Stopped => "⏳",
         VerdictKind::Errors => "⛔",
         VerdictKind::Warnings => "⚠️",
         VerdictKind::Clean => "✅",
@@ -183,6 +185,11 @@ pub fn render_report(input: &ReportInput<'_>, style: ReportStyle) -> String {
         out.table(&["Operation", "Count", "Total", "Average", "Slowest"], rows);
     }
 
+    imports_section(&mut out, input.insights);
+    if let Some(build) = doc.build_reports().last() {
+        build_section(&mut out, build);
+    }
+
     // Environment
     let mut seen = Vec::new();
     let facts: Vec<Vec<String>> = doc
@@ -227,6 +234,65 @@ pub fn render_report(input: &ReportInput<'_>, style: ReportStyle) -> String {
         doc.line_count()
     ));
     out.finish()
+}
+
+/// The slowest asset imports, when the log has any.
+fn imports_section(out: &mut Out, insights: &Insights) {
+    let (count, total) = insights.imports;
+    if insights.slowest_imports.is_empty() {
+        return;
+    }
+    out.h2("Slowest imports");
+    out.para(&format!(
+        "{count} {} took {} in total.",
+        if count == 1 { "import" } else { "imports" },
+        format_duration(total)
+    ));
+    let rows = insights
+        .slowest_imports
+        .iter()
+        .take(5)
+        .map(|i| vec![code(&i.path), format_duration(i.duration)])
+        .collect();
+    out.table(&["Asset", "Import time"], rows);
+}
+
+/// The latest build's size: total, biggest categories and assets.
+fn build_section(out: &mut Out, build: &BuildReport) {
+    out.h2("Build size");
+    let mut meta = Vec::new();
+    if let Some(total) = build.total {
+        meta.push(format!("{} complete build", format_bytes(total)));
+    }
+    if let Some(user) = build.user_assets {
+        meta.push(format!("{} of your assets", format_bytes(user)));
+    }
+    if !meta.is_empty() {
+        out.para(&meta.join(" · "));
+    }
+    let share = |bytes: u64| match build.user_assets {
+        Some(total) if total > 0 => format!("{:.1}%", bytes as f64 * 100.0 / total as f64),
+        _ => String::new(),
+    };
+    let mut categories: Vec<&SizeRow> = build.categories.iter().filter(|c| c.bytes > 0).collect();
+    categories.sort_by_key(|c| std::cmp::Reverse(c.bytes));
+    if !categories.is_empty() {
+        let rows = categories
+            .iter()
+            .take(5)
+            .map(|c| vec![c.name.clone(), format_bytes(c.bytes), share(c.bytes)])
+            .collect();
+        out.table(&["Category", "Size", "Share"], rows);
+    }
+    if !build.assets.is_empty() {
+        let rows = build
+            .assets
+            .iter()
+            .take(5)
+            .map(|a| vec![code(&a.name), format_bytes(a.bytes), share(a.bytes)])
+            .collect();
+        out.table(&["Largest assets", "Size", "Share"], rows);
+    }
 }
 
 /// "Pinned entries": what the user marked as worth a look, with their notes.

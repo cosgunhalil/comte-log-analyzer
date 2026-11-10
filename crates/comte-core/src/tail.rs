@@ -43,6 +43,12 @@ impl TailDocument {
         }
     }
 
+    /// Adds an event that doesn't come from the lines, e.g. facts read from
+    /// the start of a huge log that is followed from its end.
+    pub fn apply(&mut self, event: ParseEvent) {
+        self.doc.apply(event);
+    }
+
     /// Feeds newly appended bytes. Returns how many complete lines they finished.
     pub fn push_bytes(&mut self, bytes: &[u8]) -> usize {
         let before = self.lines.len();
@@ -79,7 +85,21 @@ impl TailDocument {
     pub fn snapshot(&self) -> LogDocument {
         let mut parser = self.parser.boxed_clone();
         let mut events = Vec::new();
+        // The unfinished last line still tells the parser what is going on
+        // (Unity writes `Start importing …` and adds the result to that same
+        // line once the import is done). It is shown once it is complete.
+        let partial_no = self.lines.len() + 1;
+        if !self.partial.is_empty() {
+            let line = String::from_utf8_lossy(&self.partial);
+            parser.feed_line(partial_no, line.trim_end_matches('\r'), &mut events);
+        }
         parser.finish(&mut events);
+        // Half a line is not shown yet: nothing may start on it.
+        events.retain(|event| match event {
+            ParseEvent::Entry(entry) => entry.line_range.start < partial_no,
+            ParseEvent::SectionStart(start) => start.line < partial_no,
+            _ => true,
+        });
         let mut doc = self.doc.clone();
         doc.apply_all(events);
         doc.set_line_count(self.lines.len());

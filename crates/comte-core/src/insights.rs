@@ -6,15 +6,19 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::activity::{AssetImport, Unfinished};
 use crate::document::LogDocument;
 use crate::model::{Category, LogEntry, MetricKind, MetricValue, SectionKind, Severity};
 
 const TOP_REPEATED: usize = 5;
 const TOP_SLOWEST: usize = 8;
+const TOP_IMPORTS: usize = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerdictKind {
     Crashed,
+    /// The log ends in the middle of an operation (stuck, or killed).
+    Stopped,
     Errors,
     Warnings,
     Clean,
@@ -82,6 +86,13 @@ pub struct Insights {
     pub slowest: Vec<Timed>,
     /// Per-kind totals, in a fixed order.
     pub timings: Vec<TimingTotal>,
+    /// The slowest asset imports, slowest first.
+    pub slowest_imports: Vec<AssetImport>,
+    /// How many imports finished, and how long they took together.
+    pub imports: (usize, Duration),
+    /// The most repeated message of any kind, engine chatter included: what
+    /// fills a runaway log.
+    pub loudest: Option<Repeated>,
 }
 
 impl Insights {
@@ -94,6 +105,13 @@ impl Insights {
         let mut slowest = timed.clone();
         slowest.sort_by(|a, b| b.duration.cmp(&a.duration).then(a.line.cmp(&b.line)));
         slowest.truncate(TOP_SLOWEST);
+        let mut slowest_imports = doc.imports().to_vec();
+        slowest_imports.sort_by(|a, b| b.duration.cmp(&a.duration).then(a.line.cmp(&b.line)));
+        slowest_imports.truncate(TOP_IMPORTS);
+        let imports = (
+            doc.imports().len(),
+            doc.imports().iter().map(|i| i.duration).sum(),
+        );
         Self {
             verdict: verdict(doc),
             repeated_problems,
@@ -101,6 +119,9 @@ impl Insights {
             repeated_messages,
             slowest,
             timings: totals(&timed),
+            slowest_imports,
+            imports,
+            loudest: repeated(doc, |_| true, 2).into_iter().next(),
         }
     }
 }
@@ -109,6 +130,11 @@ fn verdict(doc: &LogDocument) -> Verdict {
     let counts = doc.counts();
     if let Some(crash) = doc.entries().iter().find(|e| e.severity == Severity::Crash) {
         return crash_verdict(doc, crash);
+    }
+    // A log that ends mid-operation answers "why is it stuck?" before
+    // anything else; errors are mentioned as a lead.
+    if let Some(unfinished) = doc.unfinished() {
+        return stopped_verdict(doc, unfinished);
     }
     if counts.errors() > 0 {
         let errors: Vec<&LogEntry> = doc
@@ -206,6 +232,35 @@ fn verdict(doc: &LogDocument) -> Verdict {
         headline: "Clean: no warnings or errors".to_owned(),
         details: Vec::new(),
         entry: None,
+    }
+}
+
+fn stopped_verdict(doc: &LogDocument, unfinished: &Unfinished) -> Verdict {
+    let mut details = vec![format!(
+        "Started on line {} and never finished. {}",
+        unfinished.line, unfinished.hint
+    )];
+    match unfinished.also.as_slice() {
+        [] => {}
+        [one] => details.push(format!("Also still running: {one}")),
+        [first, rest @ ..] => details.push(format!(
+            "Also still running: {first} and {} more",
+            rest.len()
+        )),
+    }
+    if let Some(error) = doc
+        .entries()
+        .iter()
+        .rev()
+        .find(|e| e.severity.is_error_like())
+    {
+        details.push(format!("Last error before it: {}", error.headline(70)));
+    }
+    Verdict {
+        kind: VerdictKind::Stopped,
+        headline: unfinished.headline.clone(),
+        details,
+        entry: doc.entry_at_line(unfinished.line).map(|e| e.id),
     }
 }
 
@@ -409,6 +464,50 @@ mod tests {
         doc.apply_all(events);
         doc.finish();
         doc
+    }
+
+    #[test]
+    fn a_log_ending_mid_operation_says_where_it_stopped() {
+        let insights = Insights::of(&doc(vec![
+            ParseEvent::Entry(entry(Severity::Error, Category::UserLog, "Save failed", 2)),
+            ParseEvent::Entry(entry(
+                Severity::Info,
+                Category::AssetPipeline,
+                "Start importing Assets/Ship.fbx",
+                5,
+            )),
+            ParseEvent::Import(AssetImport {
+                path: "Assets/a.png".to_owned(),
+                duration: Duration::from_millis(20),
+                line: 3,
+            }),
+            ParseEvent::Import(AssetImport {
+                path: "Assets/b.png".to_owned(),
+                duration: Duration::from_millis(900),
+                line: 4,
+            }),
+            ParseEvent::Unfinished(Unfinished {
+                headline: "Stopped while importing Assets/Ship.fbx".to_owned(),
+                hint: "Move it out of Assets to confirm.".to_owned(),
+                subject: Some("Assets/Ship.fbx".to_owned()),
+                line: 5,
+                also: vec!["importing Assets/c.png".to_owned()],
+            }),
+        ]));
+        let v = &insights.verdict;
+        assert_eq!(v.kind, VerdictKind::Stopped, "stopping outranks errors");
+        assert_eq!(v.headline, "Stopped while importing Assets/Ship.fbx");
+        assert_eq!(
+            v.details,
+            [
+                "Started on line 5 and never finished. Move it out of Assets to confirm.",
+                "Also still running: importing Assets/c.png",
+                "Last error before it: Save failed",
+            ]
+        );
+        assert_eq!(v.entry, Some(1), "points at the entry on the start line");
+        assert_eq!(insights.imports, (2, Duration::from_millis(920)));
+        assert_eq!(insights.slowest_imports[0].path, "Assets/b.png");
     }
 
     #[test]

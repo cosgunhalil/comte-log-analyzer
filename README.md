@@ -35,6 +35,15 @@ paste a short report into Jira or Slack.
 - **Tells you what matters.** A one-line verdict ("Crashed in Scene #3",
   "103 errors (4 different)"), the most repeated problems, and the slowest
   operations (domain reloads, asset refreshes, compiles).
+- **Says where Unity got stuck.** When the log ends in the middle of
+  something, the verdict says what: "⏳ Stopped while importing
+  Assets/Hero.fbx", a domain reload or a script compile. It also says how long
+  the log has been quiet, so you can tell stuck from busy.
+- **Finds what is slow or big.** The slowest asset imports, and after a
+  build, its size by category and its largest assets.
+- **Opens runaway logs.** Logs over 512 MB (some reach tens of gigabytes) open
+  from their last 64 MB, with the environment read from the start and the
+  message that filled the file named.
 - **Takes you to the code.** Click `TurnView.cs:98` (or press Ctrl+E) and the
   file opens at that line in Rider, VS Code or Visual Studio. By default it
   uses the same editor Unity is set to.

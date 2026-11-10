@@ -189,9 +189,17 @@ Stack frame syntax differs between versions, so the parser accepts both forms:
 | `Unloading N unused Assets / (size). Loaded Objects now: M.` | **Memory** entry and metrics |
 | `[Project] Loading completed in X seconds` | closes **Startup** with its duration |
 | `Cleanup mono` / `Input System … ShutdownInProgress` | closes everything and opens **Shutdown** |
+| `[WorkerN] Start importing <path> using Guid(…) …` … `[WorkerN]  -> (artifact id: '…') in X seconds`, or both on one line | an **import** with its duration (`ParseEvent::Import`). Imports are matched per worker; the lines still fold into Asset pipeline entries. |
+| `Build Report` … size by category … `Complete build size` … `Used Assets …, sorted by uncompressed size:` … `-----` | one **Build** entry ("Build report: 164.2 MB complete build, largest asset …") and a `ParseEvent::BuildReport` with the totals, categories and up to 200 assets |
 | First lines: `Built from…`, `OS:`, `Physical Memory`, `Date:`, `Successfully changed project path to:`, the `Direct3D:` block | **Facts** for the info card |
 
 **Fold groups:** consecutive lines that share a prefix (`[Licensing::*]`, `[Package Manager]`, Bee output, Mono reload chatter, `[Tag] …`) merge into one entry, and indented lines become details of the entry above them. This turns 4,195 real lines into about 255 entries.
+
+**Where it stopped:** at the end of the log, `finish` sends `ParseEvent::Unfinished` when something is still running:
+- **An import** that never got its result. Unity writes the result onto the `Start importing` line once it is done, so a hung import is the last, unfinished line. The oldest one is named, and the others are listed as "also still running".
+- **A domain reload or script compile** whose section is still open and started within the last 40 lines. A stuck editor writes nothing more, while a section the log merely never closed is followed by plenty of output.
+- A shutdown clears imports and closes sections, so anything still open at the end started after it. Player logs don't use this.
+- Live tail feeds the unfinished last line to a copy of the parser for each snapshot, so an import in progress shows up while nothing new is written. Entries and sections never start on that half line.
 
 **Known limit:** a `Debug.Log` message is the single line right above its stack trace. If a message has several lines, only its last line becomes the entry's message; the earlier lines become entries of their own.
 
@@ -249,6 +257,7 @@ Built as `comte-core::insights::Insights::of(&doc)`, computed once per load or l
 **What's implemented:**
 - **Verdict:**
   - *Crashed in <section around the crash>*: names the last error before the crash and the first game-code frame of the native stack.
+  - *⏳ Stopped while importing X / during a domain reload / while compiling scripts* (from `ParseEvent::Unfinished`): where it started, what to try, other work still running, and the last error before it. This ranks above errors, because "why is it stuck?" is the question. For a log that is still written (not a session or a `-prev` log), the overview adds when the file was last written: "Last written 15 min ago: if Unity is still running this session, it is stuck here" versus "written moments ago: Unity may still be working on it".
   - *N errors (M different)*: mentions a failed script compilation and its compiler error count. Then either "Most frequent: X ×n at File.cs:42" or, when nothing repeats, "First error: X", because the first error is usually the root cause.
   - *No errors, N warnings*.
   - *Clean*.
@@ -256,6 +265,10 @@ Built as `comte-core::insights::Insights::of(&doc)`, computed once per load or l
 - **Most repeated messages:** your own logs, excluding engine chatter and the app's summaries (those are operations, covered by timings).
 - **Slowest operations:** the top 8 timed operations as bars.
 - **Timings table:** count, total, average and slowest per kind.
+- **Slowest imports:** the top 10 asset imports as bars, with the number of imports and their total time. Hover for the full path, click to go to the import.
+- **Build size:** from the latest build report, the complete build size, your assets' size, categories and the 8 largest assets as bars.
+- **Huge-log notice** (when only the end of the file was read): the file size, how much is shown, and `Insights::loudest`, the most repeated message of any kind, engine chatter included, which is usually what filled the file.
+- Reports get **Slowest imports** (top 5) and **Build size** (top categories and assets) sections.
 - **Environment** facts, and the **Timeline** as clickable section links.
 - Every item jumps to its entry: sections around it open, and if the current filters hide it, the filters are reset so it can be shown.
 - On the real Editor log this surfaced a 23-second asset refresh (11 refreshes, 29 s in total).
@@ -432,6 +445,11 @@ A short report to paste into Jira, Slack or a pull request, built by `comte-core
 - The details panel shows the message, where it happened, the section path ("During"), line numbers, details, the stack trace with engine and package runs folded, and the original log lines. With nothing selected, it shows the info card: facts, problem counts and a timeline overview.
 - Open a log from the sources list, with Ctrl+O, by dropping a file on the window, or as a command-line argument. With no argument, the app opens `Editor.log`.
 - Loading runs on a background thread (`std::sync::mpsc`; crossbeam was not needed). Only the latest request's result is shown.
+- **Huge logs** (over 512 MB) are read from their last 64 MB, starting at a whole line. The first 256 KB is read too, for engine detection and environment facts.
+  - `Loaded::truncated` records the sizes. Line numbers count from the first line read.
+  - The status bar shows "📏 last 64 MB of 30 GB", and saving "the whole log" records it as `filtered (last 64 MB of a 30 GB log)`.
+  - Live tail follows a huge log the same way.
+  - `COMTE_HUGE_KB=64` lowers the limit for automated checks.
 - **Dev hooks** (`COMTE_SCREENSHOT=out.png`, `COMTE_SELECT=problem`, `COMTE_SEARCH=…`, `COMTE_NOISE=1`) let the UI screenshot itself in a given state and quit, for automated visual checks.
 - The list is virtualized (only visible rows are drawn), so it stays fast on very large logs.
 - Keyboard. Single letters are used for list actions, so they're easy to remember, and they only act while no text box has focus:

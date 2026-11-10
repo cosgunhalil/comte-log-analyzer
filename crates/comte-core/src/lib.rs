@@ -19,6 +19,7 @@
 //!
 //! Line numbers are **1-based** everywhere; line ranges are half-open (`start..end`).
 
+pub mod activity;
 pub mod compare;
 pub mod document;
 pub mod engine;
@@ -34,6 +35,7 @@ pub mod session;
 pub mod source;
 pub mod tail;
 
+pub use activity::{AssetImport, BuildReport, SizeRow, Unfinished, format_bytes, parse_size};
 pub use compare::{Comparison, FactDiff, ProblemDiff, TimingDiff};
 pub use document::LogDocument;
 pub use engine::{DETECT_LINES, EngineSupport, LogLocator, detect_engine};

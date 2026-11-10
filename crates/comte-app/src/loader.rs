@@ -1,15 +1,83 @@
 //! Loading and parsing logs on a background thread, so the window stays
 //! responsive on large files.
 
-use std::io::{self, Cursor};
+use std::fs::File;
+use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use comte_core::{
-    DETECT_LINES, EngineId, Insights, LogDocument, LogKind, LogParser, PlainTextParser,
+    DETECT_LINES, EngineId, Fact, Insights, LogDocument, LogKind, LogParser, PlainTextParser,
     SessionHeader, detect_engine, parse_header, parse_kind_token, parse_reader,
 };
+
+const MB: u64 = 1024 * 1024;
+/// Logs bigger than this are opened from the end (runaway logs reach tens of
+/// gigabytes; nobody reads those from the top, and they don't fit in memory).
+pub const HUGE_LOG: u64 = 512 * MB;
+/// How much of the end of a huge log is read.
+pub const HUGE_TAIL: u64 = 64 * MB;
+/// How much of the start of a huge log is read for detection and facts.
+const HUGE_HEAD: u64 = 256 * 1024;
+
+/// Only the end of a huge log was read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Truncated {
+    pub total_bytes: u64,
+    /// Bytes read from the end.
+    pub shown_bytes: u64,
+}
+
+/// The start and the end of a huge file. The end starts after the first
+/// newline, so it holds whole lines only.
+pub struct HugeParts {
+    pub head: Vec<u8>,
+    pub tail: Vec<u8>,
+    pub truncated: Truncated,
+}
+
+pub fn read_huge(path: &Path, len: u64, tail_bytes: u64) -> io::Result<HugeParts> {
+    let mut file = File::open(path)?;
+    let mut head = Vec::new();
+    (&mut file).take(HUGE_HEAD).read_to_end(&mut head)?;
+    let start = len.saturating_sub(tail_bytes);
+    file.seek(SeekFrom::Start(start))?;
+    let mut tail = Vec::new();
+    file.take(len - start).read_to_end(&mut tail)?;
+    if start > 0
+        && let Some(newline) = tail.iter().position(|&b| b == b'\n')
+    {
+        tail.drain(..=newline);
+    }
+    Ok(HugeParts {
+        head,
+        truncated: Truncated {
+            total_bytes: len,
+            shown_bytes: tail.len() as u64,
+        },
+        tail,
+    })
+}
+
+/// Facts (engine version, OS, GPU, …) from the start of a huge log, which
+/// the end doesn't repeat.
+pub fn head_facts(head: &[u8], parser: &mut dyn LogParser) -> Vec<Fact> {
+    // Drop a last line cut in the middle.
+    let end = head.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+    parse_reader(Cursor::new(&head[..end]), parser)
+        .map(|doc| doc.facts().to_vec())
+        .unwrap_or_default()
+}
+
+/// The first lines of `bytes`, for engine detection.
+pub fn head_lines(bytes: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(&bytes[..bytes.len().min(64 * 1024)])
+        .lines()
+        .take(DETECT_LINES)
+        .map(str::to_owned)
+        .collect()
+}
 
 use crate::engines::engines;
 use crate::view::DocIndex;
@@ -33,6 +101,9 @@ pub struct Loaded {
     /// of the document is `raw[n - 1]`.
     pub raw: Vec<String>,
     pub elapsed: Duration,
+    /// Set when only the end of a huge log was read; line numbers then count
+    /// from the first line read.
+    pub truncated: Option<Truncated>,
 }
 
 impl Loaded {
@@ -74,6 +145,63 @@ pub fn pick_parser(head: &[&str]) -> Picked {
 
 /// Reads, detects and parses a log (or a saved session) synchronously.
 pub fn load(path: &Path, title: &str) -> io::Result<Loaded> {
+    // Dev hook: `COMTE_HUGE_KB=16` treats logs over 16 KB as huge (reading the
+    // last quarter of that), to check huge-log mode without a huge file.
+    match std::env::var("COMTE_HUGE_KB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        Some(kb) => load_with_limit(path, title, kb * 1024, kb * 256),
+        None => load_with_limit(path, title, HUGE_LOG, HUGE_TAIL),
+    }
+}
+
+/// [`load`] with the huge-log limits as parameters (for tests).
+pub fn load_with_limit(path: &Path, title: &str, huge: u64, tail: u64) -> io::Result<Loaded> {
+    let len = std::fs::metadata(path)?.len();
+    if len > huge {
+        return load_huge(path, title, len, tail);
+    }
+    load_whole(path, title)
+}
+
+fn load_huge(path: &Path, title: &str, len: u64, tail: u64) -> io::Result<Loaded> {
+    let started = Instant::now();
+    let parts = read_huge(path, len, tail)?;
+    let head = head_lines(&parts.head);
+    let head: Vec<&str> = head.iter().map(String::as_str).collect();
+    let Picked {
+        mut parser,
+        kind_label,
+        kind,
+    } = pick_parser(&head);
+    let facts = head_facts(&parts.head, pick_parser(&head).parser.as_mut());
+    let mut doc = parse_reader(Cursor::new(&parts.tail), parser.as_mut())?;
+    for fact in facts {
+        doc.apply(comte_core::ParseEvent::Fact(fact));
+    }
+    let raw: Vec<String> = String::from_utf8_lossy(&parts.tail)
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    let index = DocIndex::new(&doc);
+    let insights = Insights::of(&doc);
+    Ok(Loaded {
+        path: path.to_owned(),
+        title: title.to_owned(),
+        kind_label,
+        kind,
+        session: None,
+        doc,
+        index,
+        insights,
+        raw,
+        elapsed: started.elapsed(),
+        truncated: Some(parts.truncated),
+    })
+}
+
+fn load_whole(path: &Path, title: &str) -> io::Result<Loaded> {
     let started = Instant::now();
     let bytes = std::fs::read(path)?;
     let text = String::from_utf8_lossy(&bytes);
@@ -129,6 +257,7 @@ pub fn load(path: &Path, title: &str) -> io::Result<Loaded> {
         insights,
         raw,
         elapsed: started.elapsed(),
+        truncated: None,
     })
 }
 
@@ -206,6 +335,51 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../comte-unity/tests/fixtures")
             .join(name)
+    }
+
+    #[test]
+    fn huge_logs_are_read_from_the_end_with_facts_from_the_start() {
+        let mut text = std::fs::read_to_string(fixture("editor_session.log")).unwrap();
+        for i in 0..2000 {
+            text.push_str(&format!("Shadow limit exceeded on frame {i}\n"));
+        }
+        text.push_str(
+            "[Worker0] Start importing Assets/Models/Huge.fbx using Guid(02) Importer(1,2) \n",
+        );
+        let path = std::env::temp_dir().join(format!("comte-huge-{}.log", std::process::id()));
+        std::fs::write(&path, &text).unwrap();
+        let loaded = load_with_limit(&path, "Editor.log", 16 * 1024, 8 * 1024).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let cut = loaded.truncated.expect("read from the end");
+        assert_eq!(cut.total_bytes, text.len() as u64);
+        assert!(cut.shown_bytes <= 8 * 1024);
+        assert_eq!(loaded.kind_label, "Unity Editor", "detected from the start");
+        assert!(
+            loaded.raw[0].starts_with("Shadow limit exceeded on frame"),
+            "starts on a whole line: {}",
+            loaded.raw[0]
+        );
+        assert_eq!(
+            loaded.doc.fact(&comte_core::FactKey::EngineVersion),
+            Some("6000.3.11f1"),
+            "facts come from the start of the file"
+        );
+        assert_eq!(
+            loaded.insights.verdict.headline,
+            "Stopped while importing Assets/Models/Huge.fbx"
+        );
+        assert!(
+            loaded
+                .insights
+                .loudest
+                .as_ref()
+                .is_some_and(|l| l.headline.starts_with("Shadow limit exceeded")),
+            "the spam that filled the file stands out"
+        );
+
+        let small = load(&fixture("editor_session.log"), "Editor").unwrap();
+        assert!(small.truncated.is_none());
     }
 
     #[test]

@@ -6,7 +6,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use comte_core::{
-    Insights, Repeated, SessionContent, SessionHeader, Severity, VerdictKind, format_duration,
+    BuildReport, Insights, Repeated, SessionContent, SessionHeader, Severity, VerdictKind,
+    format_bytes, format_duration,
 };
 use eframe::egui::{self, Color32, RichText, Sense, Ui, vec2};
 
@@ -39,8 +40,12 @@ pub fn overview(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
     );
     ui.add_space(8.0);
 
+    if let Some(cut) = current.truncated {
+        huge_log_notice(ui, current, cut);
+    }
+
     let insights = &current.insights;
-    jump = jump.or(verdict_banner(ui, insights));
+    jump = jump.or(verdict_banner(ui, insights, quiet_for(current)));
 
     if !insights.repeated_problems.is_empty() {
         heading(ui, "Most repeated problems");
@@ -50,6 +55,16 @@ pub fn overview(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
     if !insights.slowest.is_empty() {
         heading(ui, "Slowest operations");
         jump = jump.or(slowest_bars(ui, insights));
+    }
+
+    if !insights.slowest_imports.is_empty() {
+        heading(ui, "Slowest imports");
+        jump = jump.or(slowest_imports(ui, current));
+    }
+
+    if let Some(build) = current.doc.build_reports().last() {
+        heading(ui, "Build size");
+        jump = jump.or(build_size(ui, current, build));
     }
 
     if !insights.timings.is_empty() {
@@ -161,11 +176,62 @@ fn tint(color: Color32) -> Color32 {
     Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 28)
 }
 
-fn verdict_banner(ui: &mut Ui, insights: &Insights) -> Option<Jump> {
+/// How long since the log file was last written, for a log that is still
+/// being written somewhere (not a saved session).
+fn quiet_for(current: &Loaded) -> Option<Duration> {
+    // A previous run's log (`Editor-prev.log`) is never written again.
+    let previous = current
+        .path
+        .file_stem()
+        .is_some_and(|s| s.to_string_lossy().ends_with("-prev"));
+    if current.session.is_some() || previous {
+        return None;
+    }
+    std::fs::metadata(&current.path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+}
+
+/// "Huge log (30.1 GB): showing the last 64 MB", and what filled it.
+fn huge_log_notice(ui: &mut Ui, current: &Loaded, cut: crate::loader::Truncated) {
+    let warn = ui.visuals().warn_fg_color;
+    egui::Frame::new()
+        .fill(tint(warn))
+        .stroke(egui::Stroke::new(1.0, warn.gamma_multiply(0.6)))
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                RichText::new(format!(
+                    "📏 Huge log ({}): showing the last {}",
+                    format_bytes(cut.total_bytes),
+                    format_bytes(cut.shown_bytes)
+                ))
+                .strong()
+                .color(warn),
+            );
+            ui.label(
+                "Line numbers count from the first line shown. Environment facts come from \
+                 the start of the file.",
+            );
+            if let Some(top) = &current.insights.loudest {
+                ui.label(format!(
+                    "Most repeated here, likely what filled the file: {} (×{})",
+                    top.headline, top.count
+                ));
+            }
+        });
+    ui.add_space(8.0);
+}
+
+fn verdict_banner(ui: &mut Ui, insights: &Insights, quiet: Option<Duration>) -> Option<Jump> {
     let verdict = &insights.verdict;
     let visuals = ui.visuals().clone();
     let (icon, color) = match verdict.kind {
         VerdictKind::Crashed => ("💥", severity_color(&visuals, Severity::Crash)),
+        VerdictKind::Stopped => ("⏳", visuals.warn_fg_color),
         VerdictKind::Errors => ("⛔", visuals.error_fg_color),
         VerdictKind::Warnings => ("⚠", visuals.warn_fg_color),
         VerdictKind::Clean => ("✔", Color32::from_rgb(0x3c, 0xb3, 0x71)),
@@ -189,6 +255,24 @@ fn verdict_banner(ui: &mut Ui, insights: &Insights) -> Option<Jump> {
             });
             for detail in &verdict.details {
                 ui.label(detail);
+            }
+            if verdict.kind == VerdictKind::Stopped
+                && let Some(quiet) = quiet
+            {
+                // Stuck, or just busy? How long the log has been quiet says.
+                let modified = std::time::SystemTime::now()
+                    .checked_sub(quiet)
+                    .unwrap_or(std::time::UNIX_EPOCH);
+                let text = if quiet >= Duration::from_secs(60) {
+                    format!(
+                        "Last written {}: if Unity is still running this session, it is stuck here.",
+                        crate::cli::age(modified)
+                    )
+                } else {
+                    "The log was written moments ago: Unity may still be working on it."
+                        .to_owned()
+                };
+                ui.label(RichText::new(text).strong());
             }
             if let Some(id) = verdict.entry {
                 ui.add_space(4.0);
@@ -253,6 +337,128 @@ fn repeated_list(ui: &mut Ui, items: &[Repeated]) -> Option<Jump> {
         }
     }
     jump
+}
+
+fn slowest_imports(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
+    let mut jump = None;
+    let insights = &current.insights;
+    let (count, total) = insights.imports;
+    ui.label(
+        RichText::new(format!(
+            "{count} {} took {} in total",
+            if count == 1 { "import" } else { "imports" },
+            format_duration(total)
+        ))
+        .weak()
+        .small(),
+    );
+    let longest = insights
+        .slowest_imports
+        .first()
+        .map_or(Duration::from_millis(1), |i| i.duration)
+        .max(Duration::from_millis(1));
+    for import in &insights.slowest_imports {
+        let name = import.path.rsplit('/').next().unwrap_or(&import.path);
+        let response = bar_row(
+            ui,
+            name,
+            import.duration.as_secs_f32() / longest.as_secs_f32(),
+            &format_duration(import.duration),
+        )
+        .on_hover_text(format!("{}\nLine {}", import.path, import.line));
+        if response.clicked()
+            && let Some(entry) = current.doc.entry_at_line(import.line)
+        {
+            jump = Some(Jump::Entry(entry.id));
+        }
+    }
+    jump
+}
+
+fn build_size(ui: &mut Ui, current: &Loaded, build: &BuildReport) -> Option<Jump> {
+    let mut jump = None;
+    let mut meta = Vec::new();
+    if let Some(total) = build.total {
+        meta.push(format!("{} complete build", format_bytes(total)));
+    }
+    if let Some(user) = build.user_assets {
+        meta.push(format!("{} of your assets", format_bytes(user)));
+    }
+    if !meta.is_empty() {
+        ui.label(RichText::new(meta.join(" · ")).weak().small());
+    }
+    let mut categories: Vec<_> = build.categories.iter().filter(|c| c.bytes > 0).collect();
+    categories.sort_by_key(|c| std::cmp::Reverse(c.bytes));
+    let largest = categories.first().map_or(1, |c| c.bytes.max(1));
+    for category in categories.iter().take(6) {
+        bar_row(
+            ui,
+            &category.name,
+            category.bytes as f32 / largest as f32,
+            &format_bytes(category.bytes),
+        );
+    }
+    if !build.assets.is_empty() {
+        ui.add_space(4.0);
+        ui.label(RichText::new("Largest assets").weak().small());
+        let largest = build.assets[0].bytes.max(1);
+        for asset in build.assets.iter().take(8) {
+            let name = asset.name.rsplit('/').next().unwrap_or(&asset.name);
+            let response = bar_row(
+                ui,
+                name,
+                asset.bytes as f32 / largest as f32,
+                &format_bytes(asset.bytes),
+            )
+            .on_hover_text(&asset.name);
+            if response.clicked()
+                && let Some(entry) = current.doc.entry_at_line(build.line)
+            {
+                jump = Some(Jump::Entry(entry.id));
+            }
+        }
+    }
+    jump
+}
+
+/// Label | bar | value, one clickable row.
+fn bar_row(ui: &mut Ui, label: &str, fraction: f32, value: &str) -> egui::Response {
+    let visuals = ui.visuals().clone();
+    let row_height = ui.text_style_height(&egui::TextStyle::Body) + 6.0;
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), row_height), Sense::click());
+    let painter = ui.painter_at(rect);
+    if response.hovered() {
+        painter.rect_filled(rect, 3.0, visuals.widgets.hovered.weak_bg_fill);
+    }
+    let label_width = 170.0;
+    let value_width = 72.0;
+    let y = rect.center().y;
+    let label_rect = egui::Rect::from_min_max(
+        rect.min,
+        egui::pos2(rect.left() + label_width - 6.0, rect.bottom()),
+    );
+    painter.with_clip_rect(label_rect).text(
+        egui::pos2(rect.left() + 4.0, y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(13.0),
+        visuals.text_color(),
+    );
+    let bar_max = (rect.width() - label_width - value_width).max(20.0);
+    let bar = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + label_width, y - 5.0),
+        vec2((bar_max * fraction.clamp(0.0, 1.0)).max(2.0), 10.0),
+    );
+    painter.rect_filled(bar, 3.0, visuals.selection.bg_fill);
+    painter.text(
+        egui::pos2(rect.right() - 4.0, y),
+        egui::Align2::RIGHT_CENTER,
+        value,
+        egui::FontId::proportional(12.5),
+        visuals.strong_text_color(),
+    );
+    response
 }
 
 fn slowest_bars(ui: &mut Ui, insights: &Insights) -> Option<Jump> {

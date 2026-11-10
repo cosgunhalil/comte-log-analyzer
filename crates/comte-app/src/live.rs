@@ -21,7 +21,9 @@ use std::time::{Duration, Instant};
 use comte_core::{DETECT_LINES, Insights, TailDocument};
 use eframe::egui;
 
-use crate::loader::{Loaded, Picked, pick_parser};
+use crate::loader::{
+    HUGE_LOG, HUGE_TAIL, Loaded, Picked, Truncated, head_facts, head_lines, pick_parser, read_huge,
+};
 use crate::view::DocIndex;
 
 pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -136,28 +138,44 @@ struct TailState {
     offset: u64,
     prefix: Vec<u8>,
     parse_time: Duration,
+    /// Only the end of a huge log is followed.
+    truncated: Option<Truncated>,
 }
 
 impl TailState {
     fn open(path: &Path) -> io::Result<Self> {
         let started = Instant::now();
-        let bytes = std::fs::read(path)?;
-        let text = String::from_utf8_lossy(&bytes[..bytes.len().min(64 * 1024)]);
-        let head: Vec<&str> = text.lines().take(DETECT_LINES).collect();
+        let len = std::fs::metadata(path)?.len();
+        // A huge log is followed from its last part, like it is opened.
+        let (head_bytes, bytes, truncated) = if len > HUGE_LOG {
+            let parts = read_huge(path, len, HUGE_TAIL)?;
+            (parts.head, parts.tail, Some(parts.truncated))
+        } else {
+            let bytes = std::fs::read(path)?;
+            (bytes.clone(), bytes, None)
+        };
+        let head = head_lines(&head_bytes);
+        let head: Vec<&str> = head.iter().map(String::as_str).take(DETECT_LINES).collect();
         let Picked {
             parser,
             kind_label,
             kind,
         } = pick_parser(&head);
         let mut tail = TailDocument::new(parser);
+        if truncated.is_some() {
+            for fact in head_facts(&head_bytes, pick_parser(&head).parser.as_mut()) {
+                tail.apply(comte_core::ParseEvent::Fact(fact));
+            }
+        }
         tail.push_bytes(&bytes);
         Ok(Self {
             tail,
             picked_label: kind_label,
             kind,
-            offset: bytes.len() as u64,
-            prefix: bytes[..bytes.len().min(PREFIX_BYTES)].to_vec(),
+            offset: len.max(bytes.len() as u64),
+            prefix: head_bytes[..head_bytes.len().min(PREFIX_BYTES)].to_vec(),
             parse_time: started.elapsed(),
+            truncated,
         })
     }
 
@@ -205,6 +223,7 @@ impl TailState {
             index,
             raw: self.tail.lines().to_vec(),
             elapsed: self.parse_time,
+            truncated: self.truncated,
         }
     }
 }

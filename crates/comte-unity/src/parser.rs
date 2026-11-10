@@ -16,8 +16,9 @@
 use std::time::Duration;
 
 use comte_core::{
-    Category, Fact, FactKey, FrameKind, LogEntry, LogParser, Metric, MetricKind, ParseEvent,
-    SectionKind, SectionStart, Severity, SourceRef, StackFrame, format_duration,
+    AssetImport, BuildReport, Category, Fact, FactKey, FrameKind, LogEntry, LogParser, Metric,
+    MetricKind, ParseEvent, SectionKind, SectionStart, Severity, SizeRow, SourceRef, StackFrame,
+    Unfinished, format_bytes, format_duration, parse_size,
 };
 
 use crate::common::{
@@ -58,6 +59,23 @@ regex!(UNLOAD_TIME = r"^UnloadTime: (?P<ms>[\d.]+) ms");
 regex!(
     NATIVE_FRAME = r"^\s*0x[0-9A-Fa-f]+ \((?P<module>[^)]*)\)\s*(?:\[(?P<path>[^\]]*?):(?P<line>\d+)\]\s*)?(?P<func>.*)$"
 );
+// `[Worker2] Start importing Assets/a.png using Guid(…) Importer(…)`, with the
+// result on the same line (` -> (artifact id: '…') in 0.05 seconds`) or later on
+// a line of its own from the same worker.
+regex!(
+    IMPORT_START = r"^(?:\[Worker(?P<worker>\d+)\] )?Start importing (?P<path>.+?) using Guid\([0-9a-fA-F]+\)(?P<rest>.*)$"
+);
+regex!(IMPORT_RESULT = r"-> \(artifact id: '[0-9a-fA-F]*'\) in (?P<secs>[\d.]+) seconds");
+regex!(
+    IMPORT_DONE = r"^(?:\[Worker(?P<worker>\d+)\])?\s*-> \(artifact id: '[0-9a-fA-F]*'\) in (?P<secs>[\d.]+) seconds"
+);
+// Build report rows: `Textures   12.4 mb   52.9%` and ` 8.0 mb  34.2% Assets/x.png`.
+regex!(
+    BUILD_CATEGORY =
+        r"^(?P<name>[A-Za-z][A-Za-z ]*?)\s{2,}(?P<size>[\d.]+ ?[kmgKMG]?[bB])\s+[\d.]+%\s*$"
+);
+regex!(BUILD_TOTAL = r"^Complete (?:build )?size\s+(?P<size>[\d.]+ ?[kmgKMG]?[bB])");
+regex!(BUILD_ASSET = r"^\s*(?P<size>[\d.]+ ?[kmgKMG]?[bB])\s+[\d.]+%\s+(?P<path>\S.*)$");
 regex!(POSIX_FRAME = r"^\s*#\d+\s+(?:pc\s+)?(?:0x)?[0-9a-fA-F]+\s+(?:in\s+)?(?P<func>.+)$");
 
 /// Which Unity program wrote the log.
@@ -161,6 +179,8 @@ enum Mode {
     CommandLine,
     /// A native crash: everything up to `END OF STACKTRACE` belongs to it.
     Crash,
+    /// A `Build Report` size table.
+    BuildReport,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,6 +193,13 @@ enum Block {
 
 /// Most lines a native crash entry absorbs when the log has no end marker.
 const MAX_CRASH_LINES: usize = 400;
+/// Assets kept from a build report (the list can be thousands long).
+const MAX_BUILD_ASSETS: usize = 200;
+/// A domain reload or compile counts as "where it stopped" only if it
+/// started within this many lines of the end: an editor that got stuck
+/// writes nothing more, while a section the log merely never closed
+/// explicitly is followed by plenty of other output.
+const STOPPED_WINDOW: usize = 40;
 
 #[derive(Debug, Clone)]
 struct Pending {
@@ -188,6 +215,8 @@ struct Pending {
     /// A blank line followed this (plain) entry. Only `(Filename: …)` may
     /// still attach to it: release Player logs write `message`, ` `, `(Filename: …)`.
     after_blank: bool,
+    /// The size report this entry is collecting (`Mode::BuildReport`).
+    build: Option<BuildReport>,
 }
 
 impl Pending {
@@ -201,6 +230,7 @@ impl Pending {
             gfx_api: None,
             gfx_gpu: None,
             after_blank: false,
+            build: None,
         }
     }
 
@@ -253,6 +283,11 @@ pub struct UnityParser {
     play_scene_loaded: bool,
     scene_count: u32,
     started: bool,
+    /// First line of each open section, parallel to `open`.
+    open_lines: Vec<usize>,
+    /// Imports started but not finished: (worker, path, line), oldest first.
+    importing: Vec<(Option<u32>, String, usize)>,
+    last_line: usize,
 }
 
 impl UnityParser {
@@ -265,6 +300,9 @@ impl UnityParser {
             play_scene_loaded: false,
             scene_count: 0,
             started: false,
+            open_lines: Vec::new(),
+            importing: Vec::new(),
+            last_line: 0,
         }
     }
 
@@ -287,6 +325,7 @@ impl UnityParser {
     ) {
         out.push(ParseEvent::SectionStart(SectionStart { kind, title, line }));
         self.open.push(kind);
+        self.open_lines.push(line);
     }
 
     /// Closes `kind` and everything nested inside it. No-op if not open.
@@ -301,6 +340,7 @@ impl UnityParser {
             return;
         }
         while let Some(open) = self.open.pop() {
+            self.open_lines.pop();
             let done = open == kind;
             out.push(ParseEvent::SectionEnd {
                 line,
@@ -313,6 +353,7 @@ impl UnityParser {
     }
 
     fn close_all(&mut self, line: usize, out: &mut Vec<ParseEvent>) {
+        self.open_lines.clear();
         while self.open.pop().is_some() {
             out.push(ParseEvent::SectionEnd {
                 line,
@@ -323,6 +364,92 @@ impl UnityParser {
 
     fn is_open(&self, kind: SectionKind) -> bool {
         self.open.contains(&kind)
+    }
+
+    /// First line of the innermost open section of `kind`.
+    fn open_since(&self, kind: SectionKind) -> Option<usize> {
+        let i = self.open.iter().rposition(|k| *k == kind)?;
+        self.open_lines.get(i).copied()
+    }
+
+    // -- imports and unfinished work ----------------------------------------
+
+    /// Tracks asset imports on every line, whatever entry the line ends up in.
+    fn scan_imports(&mut self, n: usize, text: &str, out: &mut Vec<ParseEvent>) {
+        if let Some(c) = IMPORT_START.captures(text) {
+            let worker = c.name("worker").and_then(|w| w.as_str().parse().ok());
+            let path = c["path"].trim().to_owned();
+            if let Some(d) = IMPORT_RESULT
+                .captures(&c["rest"])
+                .and_then(|r| secs(&r["secs"]))
+            {
+                out.push(ParseEvent::Import(AssetImport {
+                    path,
+                    duration: d,
+                    line: n,
+                }));
+            } else {
+                // A worker starts its next import only after the last one.
+                self.importing.retain(|(w, _, _)| *w != worker);
+                self.importing.push((worker, path, n));
+            }
+        } else if let Some(c) = IMPORT_DONE.captures(text) {
+            let worker = c.name("worker").and_then(|w| w.as_str().parse().ok());
+            if let Some(i) = self.importing.iter().position(|(w, _, _)| *w == worker) {
+                let (_, path, line) = self.importing.remove(i);
+                if let Some(d) = secs(&c["secs"]) {
+                    out.push(ParseEvent::Import(AssetImport {
+                        path,
+                        duration: d,
+                        line,
+                    }));
+                }
+            }
+        }
+    }
+
+    /// What the editor was still doing at the end of the log, if anything.
+    fn unfinished(&self) -> Option<Unfinished> {
+        // A shutdown clears imports and closes sections: whatever is still
+        // open at the end started after it.
+        if self.is_player() {
+            return None;
+        }
+        if let Some(((_, path, line), rest)) = self.importing.split_first() {
+            return Some(Unfinished {
+                headline: format!("Stopped while importing {path}"),
+                hint: "Unity is stuck on this asset, or quit before it was done. If it stays stuck, move the asset out of Assets and reopen the project to confirm."
+                    .to_owned(),
+                subject: Some(path.clone()),
+                line: *line,
+                also: rest
+                    .iter()
+                    .map(|(_, path, _)| format!("importing {path}"))
+                    .collect(),
+            });
+        }
+        let recent = |line: &usize| line + STOPPED_WINDOW >= self.last_line;
+        if let Some(line) = self.open_since(SectionKind::DomainReload).filter(recent) {
+            return Some(Unfinished {
+                headline: "Stopped during a domain reload".to_owned(),
+                hint: "Unity was reloading scripts. Code that never returns in a static constructor or an [InitializeOnLoad] method is a common cause."
+                    .to_owned(),
+                subject: None,
+                line,
+                also: Vec::new(),
+            });
+        }
+        if let Some(line) = self.open_since(SectionKind::Compile).filter(recent) {
+            return Some(Unfinished {
+                headline: "Stopped while compiling scripts".to_owned(),
+                hint: "The compiler never reported back. Look for a stuck bee_backend process, or a crash right after this point."
+                    .to_owned(),
+                subject: None,
+                line,
+                also: Vec::new(),
+            });
+        }
+        None
     }
 
     /// Closes any previous play session (and startup) and opens the next one.
@@ -341,7 +468,11 @@ impl UnityParser {
     // -- pending entry ------------------------------------------------------
 
     fn flush(&mut self, out: &mut Vec<ParseEvent>) {
-        if let Some(p) = self.pending.take() {
+        if let Some(mut p) = self.pending.take() {
+            if let Some(report) = p.build.take() {
+                p.entry.message = build_report_message(&report);
+                out.push(ParseEvent::BuildReport(report));
+            }
             let last_line = p.entry.line_range.end.saturating_sub(1);
             out.push(ParseEvent::Entry(p.entry));
             if let Some((kind, duration)) = p.close {
@@ -409,6 +540,41 @@ impl UnityParser {
         }
 
         match p.mode {
+            Mode::BuildReport => {
+                let report = p.build.get_or_insert_with(BuildReport::default);
+                if text.starts_with("-----") {
+                    p.absorb(n);
+                    self.flush(out);
+                    return true;
+                }
+                if let Some(c) = BUILD_TOTAL.captures(text) {
+                    report.total = parse_size(&c["size"]);
+                } else if let Some(c) = BUILD_CATEGORY.captures(text) {
+                    let bytes = parse_size(&c["size"]).unwrap_or(0);
+                    if c["name"].trim() == "Total User Assets" {
+                        report.user_assets = Some(bytes);
+                    } else {
+                        report.categories.push(SizeRow {
+                            name: c["name"].trim().to_owned(),
+                            bytes,
+                        });
+                    }
+                } else if let Some(c) = BUILD_ASSET.captures(text) {
+                    if report.assets.len() < MAX_BUILD_ASSETS {
+                        report.assets.push(SizeRow {
+                            name: c["path"].trim().to_owned(),
+                            bytes: parse_size(&c["size"]).unwrap_or(0),
+                        });
+                    }
+                } else if !(text.starts_with("Uncompressed usage by category")
+                    || text.starts_with("Used Assets"))
+                {
+                    return false; // the report is over
+                }
+                p.entry.details.push(text.to_owned());
+                p.absorb(n);
+                true
+            }
             Mode::Crash => {
                 if text.starts_with("========== END OF STACKTRACE") {
                     p.absorb(n);
@@ -539,7 +705,7 @@ impl UnityParser {
                 }
                 p.absorb(n);
             }
-            Some(p) if p.mode == Mode::Crash => p.absorb(n),
+            Some(p) if matches!(p.mode, Mode::Crash | Mode::BuildReport) => p.absorb(n),
             Some(p) if p.mode == Mode::Plain && !p.after_blank => p.after_blank = true,
             Some(_) => self.flush(out),
             None => {}
@@ -917,6 +1083,7 @@ impl UnityParser {
         {
             self.flush(out);
             if !self.is_open(SectionKind::Shutdown) {
+                self.importing.clear();
                 self.close_all(n.saturating_sub(1), out);
                 self.open_section(
                     SectionKind::Shutdown,
@@ -930,6 +1097,11 @@ impl UnityParser {
         }
 
         // --- special blocks ------------------------------------------------
+        if text == "Build Report" {
+            let e = summary(Category::Build, "Build report", n);
+            self.start(Pending::new(e).mode(Mode::BuildReport), out);
+            return;
+        }
         if PROJECT_PATH.is_match(text) {
             self.emit(info(Category::System, text, n), out);
             return;
@@ -1033,12 +1205,14 @@ impl LogParser for UnityParser {
                 out,
             );
         }
+        self.last_line = line_no;
         let text = line.trim_end();
         if text.is_empty() {
             self.on_blank(line_no, out);
             return;
         }
         self.scan_facts(line_no, text, out);
+        self.scan_imports(line_no, text, out);
         if self.continue_pending(line_no, text, out) {
             return;
         }
@@ -1047,12 +1221,31 @@ impl LogParser for UnityParser {
 
     fn finish(&mut self, out: &mut Vec<ParseEvent>) {
         self.flush(out);
+        if let Some(unfinished) = self.unfinished() {
+            out.push(ParseEvent::Unfinished(unfinished));
+        }
         // Sections still open are closed at the last line by `LogDocument::finish`.
     }
 
     fn boxed_clone(&self) -> Box<dyn LogParser> {
         Box::new(self.clone())
     }
+}
+
+/// "Build report: 106.8 MB complete build, largest asset Assets/Big.png (8.0 MB)".
+fn build_report_message(report: &BuildReport) -> String {
+    let mut message = "Build report".to_owned();
+    if let Some(total) = report.total {
+        message.push_str(&format!(": {} complete build", format_bytes(total)));
+    }
+    if let Some(top) = report.assets.first() {
+        message.push_str(&format!(
+            ", largest asset {} ({})",
+            top.name,
+            format_bytes(top.bytes)
+        ));
+    }
+    message
 }
 
 macro_rules! flavored_parser {
@@ -1634,5 +1827,167 @@ hello
             ]
         );
         assert_eq!(doc.entries().last().unwrap().section_id, Some(2));
+    }
+
+    #[test]
+    fn imports_are_timed_per_worker_and_on_one_line() {
+        let doc = parse(concat!(
+            "[Worker0] Start importing Assets/Scenes/Boot.unity using Guid(6888a054a369c1d4) Importer(815301076,1909f56b) 
+",
+            "[Worker0] (PreviewImporter)
+",
+            "[Worker1] Start importing Assets/Models/Ship.fbx using Guid(a35eda5456421f74) Importer(2089858483,b0f066a2) 
+",
+            "[Worker1] (ScriptedImporter)
+",
+            "[Worker0]  -> (artifact id: 'd440876f2fcf5ab7') in 0.0057372 seconds
+",
+            "[Worker1]  -> (artifact id: 'fbaa3db831b5e903') in 2.5 seconds
+",
+            "Start importing Assets/Fonts/Sans.asset using Guid(2e498d1c8094) (NativeFormatImporter) -> (artifact id: 'a94a4c034600') in 0.0061 seconds
+",
+        ));
+        let imports: Vec<(&str, u128, usize)> = doc
+            .imports()
+            .iter()
+            .map(|i| (i.path.as_str(), i.duration.as_millis(), i.line))
+            .collect();
+        assert_eq!(
+            imports,
+            [
+                ("Assets/Scenes/Boot.unity", 5, 1),
+                ("Assets/Models/Ship.fbx", 2500, 3),
+                ("Assets/Fonts/Sans.asset", 6, 7),
+            ]
+        );
+        assert!(doc.unfinished().is_none(), "every import finished");
+    }
+
+    #[test]
+    fn a_log_ending_in_an_import_says_which_asset() {
+        let doc = parse(concat!(
+            "[Worker0] Start importing Assets/a.png using Guid(01) Importer(1,2) 
+",
+            "[Worker1] Start importing Assets/Models/Huge.fbx using Guid(02) Importer(1,2) 
+",
+            "[Worker0]  -> (artifact id: 'aa') in 0.01 seconds
+",
+            "[Worker0] Start importing Assets/b.png using Guid(03) Importer(1,2) 
+",
+        ));
+        let stopped = doc.unfinished().expect("the log ends mid-import");
+        assert_eq!(
+            stopped.headline,
+            "Stopped while importing Assets/Models/Huge.fbx"
+        );
+        assert_eq!(stopped.subject.as_deref(), Some("Assets/Models/Huge.fbx"));
+        assert_eq!(stopped.line, 2);
+        assert_eq!(stopped.also, ["importing Assets/b.png"]);
+    }
+
+    #[test]
+    fn a_domain_reload_counts_as_stopped_only_at_the_very_end() {
+        let stuck = parse(
+            "Begin MonoManager ReloadAssembly
+- Loaded All Assemblies, in  0.3 seconds
+",
+        );
+        assert_eq!(
+            stuck.unfinished().map(|u| u.headline.as_str()),
+            Some("Stopped during a domain reload")
+        );
+
+        let mut busy = String::from(
+            "Begin MonoManager ReloadAssembly
+",
+        );
+        for i in 0..60 {
+            busy.push_str(&format!(
+                "[Flow] step {i}
+"
+            ));
+        }
+        assert!(
+            parse(&busy).unfinished().is_none(),
+            "plenty happened after it"
+        );
+
+        let finished = parse(
+            "Begin MonoManager ReloadAssembly
+Domain Reload Profiling: 1304ms
+",
+        );
+        assert!(finished.unfinished().is_none());
+
+        let quit = parse(
+            "Begin MonoManager ReloadAssembly
+Cleanup mono
+",
+        );
+        assert!(
+            quit.unfinished().is_none(),
+            "a clean shutdown is not a hang"
+        );
+    }
+
+    #[test]
+    fn live_tail_sees_an_import_on_the_unfinished_last_line() {
+        // Unity adds the result to the `Start importing` line once the import
+        // is done, so while it runs the line has no newline yet.
+        let mut tail = comte_core::TailDocument::new(Box::new(EditorParser::new()));
+        tail.push_bytes(b"Refreshing native plugins\nStart importing Assets/Big.fbx using Guid(01) Importer(1,2) ");
+        assert_eq!(
+            tail.snapshot().unfinished().map(|u| u.headline.clone()),
+            Some("Stopped while importing Assets/Big.fbx".to_owned())
+        );
+        tail.push_bytes(b" -> (artifact id: 'ab') in 4.5 seconds\n");
+        let done = tail.snapshot();
+        assert!(done.unfinished().is_none());
+        assert_eq!(done.imports()[0].path, "Assets/Big.fbx");
+    }
+
+    #[test]
+    fn build_report_sizes_are_read() {
+        let doc = parse(concat!(
+            "Build Report
+",
+            "Uncompressed usage by category (Percentages based on user generated assets only):
+",
+            "Textures               12.0 mb	 60.0% 
+",
+            "Meshes                 0.0 kb	 0.0% 
+",
+            "Scripts                8.0 mb	 40.0% 
+",
+            "Total User Assets      20.0 mb	 100.0% 
+",
+            "Complete build size    106.5 mb
+",
+            "Used Assets and files from the Resources folder, sorted by uncompressed size:
+",
+            " 8.0 mb	 40.0% Assets/Textures/Sky Box.png
+",
+            " 512.0 kb	 2.5% Assets/Audio/theme.ogg
+",
+            "-------------------------------------------------------------------------------
+",
+            "Build completed
+",
+        ));
+        let report = doc.build_reports().last().expect("one report");
+        let mb = 1024 * 1024;
+        assert_eq!(report.total, Some(106 * mb + mb / 2));
+        assert_eq!(report.user_assets, Some(20 * mb));
+        assert_eq!(report.categories.len(), 3);
+        assert_eq!(report.categories[0].name, "Textures");
+        assert_eq!(report.assets[0].name, "Assets/Textures/Sky Box.png");
+        assert_eq!(report.assets[1].bytes, 512 * 1024);
+        let entry = &doc.entries()[0];
+        assert_eq!(
+            entry.message,
+            "Build report: 106.5 MB complete build, largest asset Assets/Textures/Sky Box.png (8.0 MB)"
+        );
+        assert_eq!(entry.line_range, 1..12, "the whole table is one entry");
+        assert_eq!(doc.entries()[1].message, "Build completed");
     }
 }
