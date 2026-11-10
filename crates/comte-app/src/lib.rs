@@ -18,6 +18,7 @@ mod loader;
 mod overview;
 mod report_export;
 mod save;
+mod search;
 mod settings;
 mod theme;
 mod view;

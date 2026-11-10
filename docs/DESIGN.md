@@ -429,7 +429,19 @@ A short report to paste into Jira, Slack or a pull request, built by `comte-core
 - Loading runs on a background thread (`std::sync::mpsc`; crossbeam was not needed). Only the latest request's result is shown.
 - **Dev hooks** (`COMTE_SCREENSHOT=out.png`, `COMTE_SELECT=problem`, `COMTE_SEARCH=…`, `COMTE_NOISE=1`) let the UI screenshot itself in a given state and quit, for automated visual checks.
 - The list is virtualized (only visible rows are drawn), so it stays fast on very large logs.
-- Keyboard: `Ctrl+F` search, `F8` / `Shift+F8` next or previous problem (this opens collapsed sections), `↑` / `↓` move the selection, `Esc` clears it, `F5` reloads, `Ctrl+O` opens a file, `Ctrl+S` saves the session (M6).
+- Keyboard:
+  - `Ctrl+F` search; `Enter` / `Shift+Enter` or `F3` / `Shift+F3` for the next or previous match; `Esc` in the search box clears it.
+  - `F8` / `Shift+F8` next or previous problem (this opens collapsed sections).
+  - `↑` / `↓` move the selection, `Esc` clears it.
+  - `F5` reloads, `Ctrl+O` opens a file, `Ctrl+S` saves the session (M6).
+- **Search** (`comte-app::search`):
+  - **Words:** every word must appear somewhere in the entry (message without rich-text tags, details, stack frames, `file:line`), in any field and any order. `"a phrase"` keeps words together and in order, and `-word` / `-"a phrase"` excludes.
+  - **Toggles:** **Aa** matches case, **.*** treats the whole text as one regular expression, and **▽** switches between hiding entries that don't match (the default) and only highlighting matches.
+  - **Matching:** words compile to escaped, case-insensitive regexes, so matching and highlighting always agree on byte ranges, even for non-ASCII text.
+  - **Invalid regex:** an unfinished or invalid regex shows its error and hides nothing, so the list doesn't go blank while you type.
+  - **Highlighting:** matches are highlighted in entry rows, section titles, the details message, detail lines and stack frames.
+  - **Match count:** shown next to the box ("12 matches", "No matches").
+  - **Collapsed sections:** while a search is filtering, they open so their matches show. In highlight-only mode they stay as you set them, and a highlighted section title shows where the matches are.
 
 ---
 

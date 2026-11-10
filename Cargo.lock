@@ -661,6 +661,7 @@ dependencies = [
  "directories",
  "eframe",
  "png",
+ "regex",
  "rfd",
  "serde",
  "toml",

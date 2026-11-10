@@ -27,6 +27,7 @@ comte-unity.workspace = true
 directories = "6.0.0"
 eframe = "0.37"
 png = "0.18"
+regex.workspace = true
 rfd = "0.18"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.2.1"

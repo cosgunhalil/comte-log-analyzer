@@ -56,12 +56,12 @@ pub struct Prepared {
 
 /// The original lines of every entry the filter shows, in file order.
 pub fn visible_lines<'a>(loaded: &'a Loaded, filter: &Filter) -> Vec<&'a str> {
-    let needle = filter.search.trim().to_lowercase();
+    let query = filter.query();
     let mut ranges: Vec<std::ops::Range<usize>> = loaded
         .doc
         .entries()
         .iter()
-        .filter(|e| filter.matches(e, &needle))
+        .filter(|e| filter.matches(e, &query))
         .map(|e| e.line_range.clone())
         .collect();
     ranges.sort_by_key(|r| r.start);
@@ -114,8 +114,14 @@ pub fn describe_filter(filter: &Filter) -> String {
         hidden.sort();
         parts.push(format!("hiding {}", hidden.join(", ")));
     }
-    if !filter.search.trim().is_empty() {
-        parts.push(format!("search \"{}\"", filter.search.trim()));
+    if filter.search_filters && !filter.search.trim().is_empty() {
+        let mode = match (filter.search_regex, filter.search_case) {
+            (true, true) => " (regex, case-sensitive)",
+            (true, false) => " (regex)",
+            (false, true) => " (case-sensitive)",
+            (false, false) => "",
+        };
+        parts.push(format!("search \"{}\"{mode}", filter.search.trim()));
     }
     parts.join(", ")
 }

@@ -37,11 +37,12 @@ use crate::save::{
     self, ContentChoice, Prepared, SaveRequest, SessionFile, current_user_name, default_dir,
     default_file_name, discover_sessions, visible_lines,
 };
+use crate::search::Query;
 use crate::settings::{Settings, ThemeChoice};
-use crate::theme::{message_job, severity_color, severity_icon};
+use crate::theme::{highlight, highlight_color, message_job, severity_color, severity_icon};
 use crate::view::{
-    Filter, Row, build_rows, culprit_label, default_collapsed, find_problem, row_of_entry,
-    section_path,
+    Filter, Row, build_rows, count_matches, culprit_label, default_collapsed, find_match,
+    find_problem, row_of_entry, search_opens_sections, section_path,
 };
 
 const SEARCH_ID: &str = "comte-search";
@@ -61,6 +62,9 @@ pub struct ComteApp {
     /// Scroll the list to this section header (after a timeline click).
     scroll_to_section: Option<u32>,
     focus_search: bool,
+    /// The compiled search, and how many entries it matches.
+    query: Query,
+    match_count: usize,
     save_dialog: Option<SaveDialog>,
     /// "Also redact" words, kept between saves.
     extra_redactions: String,
@@ -117,6 +121,11 @@ impl ComteApp {
         if let Some(search) = &dev.search {
             filter.search = search.clone();
         }
+        match dev.search_mode.as_deref() {
+            Some("highlight") => filter.search_filters = false,
+            Some("regex") => filter.search_regex = true,
+            _ => {}
+        }
         let mut app = Self {
             sources: if dev.no_discovery {
                 Vec::new()
@@ -134,6 +143,8 @@ impl ComteApp {
             scroll_to_selected: false,
             scroll_to_section: None,
             focus_search: false,
+            query: Query::Empty,
+            match_count: 0,
             save_dialog: None,
             extra_redactions: settings.also_redact.clone(),
             sessions: if dev.no_discovery {
@@ -553,11 +564,32 @@ impl ComteApp {
     }
 
     fn rebuild_rows(&mut self) {
+        self.query = self.filter.query();
         self.rows = match &self.current {
             Some(c) => build_rows(&c.doc, &c.index, &self.filter, &self.collapsed),
             None => Vec::new(),
         };
+        self.match_count = self
+            .current
+            .as_ref()
+            .map_or(0, |c| count_matches(&c.doc, &self.filter, &self.query));
         self.rows_dirty = false;
+    }
+
+    /// Selects the next/previous entry the search matches (Enter, F3).
+    fn jump_to_match(&mut self, forward: bool) {
+        let Some(current) = &self.current else {
+            return;
+        };
+        if let Some(id) = find_match(
+            &current.doc,
+            &self.filter,
+            &self.query,
+            self.selected,
+            forward,
+        ) {
+            self.reveal(id);
+        }
     }
 
     /// Selects the next/previous warning or error, expanding its sections.
@@ -583,15 +615,14 @@ impl ComteApp {
             }
         }
         // A jump target hidden by the filters (e.g. engine noise) is shown anyway.
-        if let Some(entry) = current.doc.entry(id) {
-            let needle = self.filter.search.trim().to_lowercase();
-            if !self.filter.matches(entry, &needle) {
-                self.filter = Filter {
-                    show_noise: true,
-                    ..Filter::default()
-                };
-                self.rows_dirty = true;
-            }
+        if let Some(entry) = current.doc.entry(id)
+            && !self.filter.matches(entry, &self.query)
+        {
+            self.filter = Filter {
+                show_noise: true,
+                ..Filter::default()
+            };
+            self.rows_dirty = true;
         }
         self.select(Some(id));
     }
@@ -1172,6 +1203,18 @@ impl ComteApp {
         if save {
             self.open_save_dialog();
         }
+        let (next_match, prev_match) = ctx.input_mut(|i| {
+            (
+                i.consume_key(Modifiers::NONE, Key::F3),
+                i.consume_key(Modifiers::SHIFT, Key::F3),
+            )
+        });
+        if next_match {
+            self.jump_to_match(true);
+        }
+        if prev_match {
+            self.jump_to_match(false);
+        }
         let (open, reload, find, next, prev, escape, down, up) = ctx.input_mut(|i| {
             (
                 i.consume_key(Modifiers::COMMAND, Key::O),
@@ -1200,7 +1243,12 @@ impl ComteApp {
         if prev {
             self.jump_to_problem(false);
         }
-        if escape && !typing {
+        let search_focused = ctx.memory(|m| m.has_focus(egui::Id::unique(SEARCH_ID)));
+        if escape && search_focused {
+            // Esc in the search box clears it and gives the list the keyboard.
+            self.filter.search.clear();
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::unique(SEARCH_ID)));
+        } else if escape && !typing {
             if self.compare.is_some() {
                 self.compare = None;
             } else {
@@ -1380,7 +1428,7 @@ impl ComteApp {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.label(
-                    RichText::new("F8 next problem · Ctrl+F search · ↑↓ move")
+                    RichText::new("F8 next problem · F3 next match · Ctrl+F search · ↑↓ move")
                         .weak()
                         .small(),
                 );
@@ -1514,15 +1562,47 @@ impl ComteApp {
         ui.horizontal_wrapped(|ui| {
             let search = egui::TextEdit::singleline(&mut self.filter.search)
                 .id(egui::Id::unique(SEARCH_ID))
-                .hint_text("🔍 Search messages, files, stack frames…")
-                .desired_width(320.0);
-            let response = ui.add(search);
+                .hint_text("🔍 Search: words, \"a phrase\", -exclude")
+                .desired_width(300.0);
+            let response = ui.add(search).on_hover_text(
+                "All words must appear (message, details, stack frames, files).\n\
+                 \"quoted phrase\" matches exactly; -word excludes.\n\
+                 Enter / Shift+Enter (or F3 / Shift+F3): next / previous match. Esc clears.",
+            );
             if self.focus_search {
                 response.request_focus();
                 self.focus_search = false;
             }
+            // Enter steps through matches and keeps the box focused.
+            if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                let backwards = ui.input(|i| i.modifiers.shift);
+                self.jump_to_match(!backwards);
+                response.request_focus();
+            }
+            ui.toggle_value(&mut self.filter.search_case, RichText::new("Aa").monospace())
+                .on_hover_text("Match case");
+            ui.toggle_value(&mut self.filter.search_regex, RichText::new(".*").monospace())
+                .on_hover_text("Regular expression");
+            ui.toggle_value(&mut self.filter.search_filters, "▽")
+                .on_hover_text("On: hide entries that don't match.\nOff: show everything, only highlight matches.");
+            if let Some(error) = self.query.error() {
+                ui.colored_label(ui.visuals().error_fg_color, format!("Invalid regex: {error}"))
+                    .on_hover_text(error.to_owned());
+            } else if !self.query.is_empty() {
+                let text = match self.match_count {
+                    0 => "No matches".to_owned(),
+                    1 => "1 match".to_owned(),
+                    n => format!("{n} matches"),
+                };
+                let color = if self.match_count == 0 {
+                    ui.visuals().warn_fg_color
+                } else {
+                    ui.visuals().weak_text_color()
+                };
+                ui.label(RichText::new(text).color(color));
+            }
             if !self.filter.search.is_empty()
-                && ui.small_button("✖").on_hover_text("Clear search").clicked()
+                && ui.small_button("✖").on_hover_text("Clear search (Esc)").clicked()
             {
                 self.filter.search.clear();
             }
@@ -1610,6 +1690,8 @@ impl ComteApp {
             .map(|e| (e.fingerprint, e.section_id));
 
         let rich = self.settings.render_rich_text;
+        let query = &self.query;
+        let search_opens = search_opens_sections(&self.filter, query);
         scroll.show_rows(ui, row_height, self.rows.len(), |ui, range| {
             for row in &self.rows[range] {
                 let (rect, response) =
@@ -1625,7 +1707,8 @@ impl ComteApp {
                             &response,
                             section,
                             depth,
-                            self.collapsed.contains(&id),
+                            self.collapsed.contains(&id) && !search_opens,
+                            query,
                         );
                         if response.clicked() {
                             toggled_section = Some(id);
@@ -1645,6 +1728,7 @@ impl ComteApp {
                             &response,
                             entry,
                             RowLook {
+                                query,
                                 depth,
                                 repeats,
                                 selected: is_selected,
@@ -1699,6 +1783,7 @@ impl ComteApp {
         let mut back = false;
         let mut open: Option<comte_core::SourceRef> = None;
         let links = Links {
+            query: self.query.clone(),
             rich: self.settings.render_rich_text,
             roots: self.project_roots(),
             ide: self.ide_name(),
@@ -1845,6 +1930,7 @@ fn paint_section_row(
     section: &Section,
     depth: u16,
     collapsed: bool,
+    query: &Query,
 ) {
     let visuals = ui.visuals();
     let painter = ui.painter_at(rect);
@@ -1867,13 +1953,20 @@ fn paint_section_row(
         visuals.weak_text_color(),
     );
     x += 16.0;
-    let title = painter.text(
-        egui::pos2(x, y),
-        Align2::LEFT_CENTER,
-        &section.title,
-        font.clone(),
-        visuals.strong_text_color(),
+    // The title is highlighted too, so a collapsed section shows that it
+    // holds what you searched for.
+    let job = egui::text::LayoutJob::single_section(
+        section.title.clone(),
+        egui::TextFormat {
+            font_id: font.clone(),
+            color: visuals.strong_text_color(),
+            ..Default::default()
+        },
     );
+    let ranges = query.ranges(&section.title);
+    let galley = painter.layout_job(highlight(job, &ranges, highlight_color(visuals)));
+    let title = egui::Rect::from_min_size(egui::pos2(x, y - galley.size().y / 2.0), galley.size());
+    painter.galley(title.min, galley, visuals.strong_text_color());
     x = title.right() + 10.0;
     if let Some(duration) = section.duration {
         let d = painter.text(
@@ -1914,7 +2007,9 @@ fn paint_section_row(
 }
 
 /// How an entry row is shown.
-struct RowLook {
+struct RowLook<'a> {
+    /// Search matches to highlight.
+    query: &'a Query,
     depth: u16,
     /// Duplicates collapsed into this row.
     repeats: u32,
@@ -1928,9 +2023,10 @@ fn paint_entry_row(
     rect: egui::Rect,
     response: &egui::Response,
     entry: &LogEntry,
-    look: RowLook,
+    look: RowLook<'_>,
 ) {
     let RowLook {
+        query,
         depth,
         repeats,
         selected,
@@ -2000,13 +2096,15 @@ fn paint_entry_row(
         egui::pos2(right.max(x + 60.0), rect.bottom()),
     );
     // Unity rich text (`<color=cyan>…</color>`) is shown in color, tags hidden.
-    let galley = painter.layout_job(message_job(
+    let job = message_job(
         &entry.message,
         FontId::proportional(13.5),
         text_color,
         visuals,
         rich,
-    ));
+    );
+    let ranges = query.ranges(&job.text);
+    let galley = painter.layout_job(highlight(job, &ranges, highlight_color(visuals)));
     let top = y - galley.size().y / 2.0;
     painter.with_clip_rect(message_rect).galley(
         egui::pos2(message_rect.left(), top),
@@ -2019,6 +2117,8 @@ fn paint_entry_row(
 
 /// What details need to turn source locations into "open in IDE" links.
 struct Links {
+    /// Search matches to highlight.
+    query: Query,
     roots: Vec<PathBuf>,
     /// Show Unity rich-text colors in messages.
     rich: bool,
@@ -2070,7 +2170,8 @@ fn entry_details(
         links.rich,
     );
     message.wrap.max_width = ui.available_width();
-    ui.label(message);
+    let ranges = links.query.ranges(&message.text);
+    ui.label(highlight(message, &ranges, highlight_color(ui.visuals())));
     if let Some(culprit) = entry.culprit()
         && resolve_source(&culprit.path, &links.roots).is_some()
         && ui
@@ -2127,8 +2228,9 @@ fn entry_details(
             .id_salt(("details", entry.id))
             .default_open(entry.details.len() <= 12)
             .show(ui, |ui| {
+                let color = ui.visuals().text_color();
                 for line in entry.details.iter().take(300) {
-                    ui.label(RichText::new(line).monospace().small());
+                    searched_label(ui, line, FontId::monospace(11.5), color, &links.query);
                 }
             });
     }
@@ -2169,8 +2271,15 @@ fn stack_trace(ui: &mut Ui, entry: &LogEntry, links: &Links) -> Option<comte_cor
     while i < frames.len() {
         if frames[i].kind == FrameKind::User {
             let frame = &frames[i];
-            ui.label(RichText::new(&frame.text).strong().monospace())
-                .on_hover_text(&frame.raw);
+            let color = ui.visuals().strong_text_color();
+            searched_label(
+                ui,
+                &frame.text,
+                FontId::monospace(13.0),
+                color,
+                &links.query,
+            )
+            .on_hover_text(&frame.raw);
             if let Some(location) = &frame.location {
                 ui.horizontal(|ui| {
                     ui.add_space(24.0);
@@ -2251,4 +2360,25 @@ fn apply_theme(ctx: &egui::Context, theme: ThemeChoice) {
         ThemeChoice::Light => egui::ThemePreference::Light,
         ThemeChoice::Dark => egui::ThemePreference::Dark,
     });
+}
+
+/// A label with search matches highlighted.
+fn searched_label(
+    ui: &mut Ui,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    query: &Query,
+) -> egui::Response {
+    let mut job = egui::text::LayoutJob::single_section(
+        text.to_owned(),
+        egui::TextFormat {
+            font_id: font,
+            color,
+            ..Default::default()
+        },
+    );
+    job.wrap.max_width = ui.available_width();
+    let ranges = query.ranges(text);
+    ui.label(highlight(job, &ranges, highlight_color(ui.visuals())))
 }

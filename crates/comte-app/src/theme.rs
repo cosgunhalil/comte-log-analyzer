@@ -38,6 +38,61 @@ pub fn message_job(
     job
 }
 
+/// Background for search matches.
+pub fn highlight_color(visuals: &Visuals) -> Color32 {
+    if visuals.dark_mode {
+        Color32::from_rgba_unmultiplied(255, 196, 0, 80)
+    } else {
+        Color32::from_rgba_unmultiplied(255, 200, 0, 130)
+    }
+}
+
+/// Marks byte `ranges` of `job.text` with a background color, splitting the
+/// job's sections where needed. Ranges must lie on character boundaries.
+pub fn highlight(
+    mut job: LayoutJob,
+    ranges: &[std::ops::Range<usize>],
+    background: Color32,
+) -> LayoutJob {
+    if ranges.is_empty() {
+        return job;
+    }
+    let mut sections = Vec::with_capacity(job.sections.len() + ranges.len() * 2);
+    for section in std::mem::take(&mut job.sections) {
+        // egui ranges are `ByteIndex` newtypes over `usize`.
+        let range = section.byte_range.start.0..section.byte_range.end.0;
+        let mut cursor = range.start;
+        let mut first = true;
+        let mut push = |sections: &mut Vec<_>, part: std::ops::Range<usize>, marked: bool| {
+            if part.is_empty() {
+                return;
+            }
+            let mut piece = section.clone();
+            if !std::mem::take(&mut first) {
+                piece.leading_space = 0.0;
+            }
+            piece.byte_range = part.start.into()..part.end.into();
+            if marked {
+                piece.format.background = background;
+            }
+            sections.push(piece);
+        };
+        for hit in ranges
+            .iter()
+            .filter(|h| h.start < range.end && h.end > range.start)
+        {
+            let start = hit.start.max(range.start);
+            let end = hit.end.min(range.end);
+            push(&mut sections, cursor..start, false);
+            push(&mut sections, start..end, true);
+            cursor = end;
+        }
+        push(&mut sections, cursor..range.end, false);
+    }
+    job.sections = sections;
+    job
+}
+
 /// Keeps a log's own color legible on the current theme: Unity's console is
 /// dark, so `white` or `yellow` would vanish on a light background. Colors
 /// with too little contrast are mixed toward the theme's text color.
@@ -112,6 +167,44 @@ mod tests {
         assert!(contrast(readable(white, &light), light.panel_fill) >= 3.0);
         let navy = Color32::from_rgb(0, 0, 128);
         assert!(contrast(readable(navy, &dark), dark.panel_fill) >= 3.0);
+    }
+
+    #[test]
+    fn highlight_splits_sections_at_matches() {
+        let visuals = Visuals::dark();
+        let job = message_job(
+            "[10:15] <color=cyan>Starting new race</color>",
+            FontId::proportional(13.0),
+            Color32::GRAY,
+            &visuals,
+            true,
+        );
+        // job.text is "[10:15] Starting new race"; highlight "new" (17..20)
+        // inside the cyan section and "10" (1..3) inside the plain one.
+        let marked = highlight(job, &[1..3, 17..20], Color32::YELLOW);
+        let pieces: Vec<(&str, bool, Color32)> = marked
+            .sections
+            .iter()
+            .map(|s| {
+                (
+                    &marked.text[s.byte_range.start.0..s.byte_range.end.0],
+                    s.format.background == Color32::YELLOW,
+                    s.format.color,
+                )
+            })
+            .collect();
+        let cyan = Color32::from_rgb(0, 255, 255);
+        assert_eq!(
+            pieces,
+            [
+                ("[", false, Color32::GRAY),
+                ("10", true, Color32::GRAY),
+                (":15] ", false, Color32::GRAY),
+                ("Starting ", false, cyan),
+                ("new", true, cyan),
+                (" race", false, cyan),
+            ]
+        );
     }
 
     #[test]

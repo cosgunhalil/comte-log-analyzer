@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet};
 
 use comte_core::{Category, LogDocument, LogEntry, SectionKind, Severity};
 
+use crate::search::Query;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Item {
     Section(u32),
@@ -62,8 +64,14 @@ pub struct Filter {
     pub show_noise: bool,
     /// Merge entries with the same fingerprint within a section ("×42").
     pub collapse_duplicates: bool,
-    /// Case-insensitive text search over messages, details, frames and files.
+    /// Search text (see [`crate::search`] for the syntax).
     pub search: String,
+    /// Match case exactly.
+    pub search_case: bool,
+    /// Treat the search text as a regular expression.
+    pub search_regex: bool,
+    /// Hide entries that don't match; off = only highlight matches.
+    pub search_filters: bool,
     pub hidden_categories: HashSet<Category>,
 }
 
@@ -76,6 +84,9 @@ impl Default for Filter {
             show_noise: false,
             collapse_duplicates: true,
             search: String::new(),
+            search_case: false,
+            search_regex: false,
+            search_filters: true,
             hidden_categories: HashSet::new(),
         }
     }
@@ -90,29 +101,23 @@ impl Filter {
         }
     }
 
-    /// Whether `entry` is visible. `needle` is the lowercased search text.
-    pub fn matches(&self, entry: &LogEntry, needle: &str) -> bool {
-        if !self.severity_visible(entry.severity)
-            || self.hidden_categories.contains(&entry.category)
-            || (!self.show_noise && entry.is_engine_chatter())
-        {
-            return false;
-        }
-        needle.is_empty() || entry_contains(entry, needle)
+    /// The compiled search query.
+    pub fn query(&self) -> Query {
+        Query::compile(&self.search, self.search_case, self.search_regex)
     }
-}
 
-fn entry_contains(entry: &LogEntry, needle: &str) -> bool {
-    let hit = |text: &str| text.to_lowercase().contains(needle);
-    // Search the words, not the rich-text tags around them.
-    let plain_hit = |text: &str| hit(&comte_core::markup::plain(text));
-    plain_hit(&entry.message)
-        || entry.details.iter().any(|d| plain_hit(d))
-        || entry
-            .stack
-            .iter()
-            .any(|f| hit(&f.text) || f.location.as_ref().is_some_and(|l| hit(&l.path)))
-        || entry.source.as_ref().is_some_and(|s| hit(&s.path))
+    /// Passes every filter except the search text.
+    pub fn shows(&self, entry: &LogEntry) -> bool {
+        self.severity_visible(entry.severity)
+            && !self.hidden_categories.contains(&entry.category)
+            && (self.show_noise || !entry.is_engine_chatter())
+    }
+
+    /// Whether `entry` is visible: [`Self::shows`] and, unless search only
+    /// highlights, the search `query` (from [`Self::query`]).
+    pub fn matches(&self, entry: &LogEntry, query: &Query) -> bool {
+        self.shows(entry) && (!self.search_filters || query.matches_entry(entry))
+    }
 }
 
 /// One line of the entry list.
@@ -143,9 +148,11 @@ pub fn build_rows(
         index,
         filter,
         collapsed,
-        needle: filter.search.trim().to_lowercase(),
+        search_opens: false,
+        query: filter.query(),
         rows: Vec::new(),
     };
+    builder.search_opens = search_opens_sections(filter, &builder.query);
     builder.level(&index.root, 0, true);
     builder.rows
 }
@@ -155,7 +162,9 @@ struct RowBuilder<'a> {
     index: &'a DocIndex,
     filter: &'a Filter,
     collapsed: &'a HashSet<u32>,
-    needle: String,
+    query: Query,
+    /// A filtering search is active: show matches even in collapsed sections.
+    search_opens: bool,
     rows: Vec<Row>,
 }
 
@@ -172,7 +181,7 @@ impl RowBuilder<'_> {
                     let Some(entry) = self.doc.entry(id) else {
                         continue;
                     };
-                    if !self.filter.matches(entry, &self.needle) {
+                    if !self.filter.matches(entry, &self.query) {
                         continue;
                     }
                     visible += 1;
@@ -199,7 +208,7 @@ impl RowBuilder<'_> {
                     if emit {
                         self.rows.push(Row::Section { id, depth });
                     }
-                    let open = emit && !self.collapsed.contains(&id);
+                    let open = emit && (self.search_opens || !self.collapsed.contains(&id));
                     let inner = self.level(&index.children[id as usize], depth + 1, open);
                     if inner == 0 {
                         self.rows.truncate(header);
@@ -210,6 +219,12 @@ impl RowBuilder<'_> {
         }
         visible
     }
+}
+
+/// While a search hides non-matching entries, collapsed sections open so the
+/// matches inside them are visible (you searched for them, after all).
+pub fn search_opens_sections(filter: &Filter, query: &Query) -> bool {
+    filter.search_filters && !query.is_empty() && query.error().is_none()
 }
 
 /// Sections collapsed when a log opens: those without warnings or errors,
@@ -250,8 +265,47 @@ pub fn find_problem(
     from: Option<u64>,
     forward: bool,
 ) -> Option<u64> {
-    let needle = filter.search.trim().to_lowercase();
-    let is_problem = |e: &&LogEntry| e.severity >= Severity::Warning && filter.matches(e, &needle);
+    let query = filter.query();
+    let is_problem = |e: &&LogEntry| e.severity >= Severity::Warning && filter.matches(e, &query);
+    find_from(doc, from, forward, is_problem)
+}
+
+/// The next (or previous) entry the search matches, among entries the other
+/// filters show, wrapping around. Used by Enter / F3 in the search box.
+pub fn find_match(
+    doc: &LogDocument,
+    filter: &Filter,
+    query: &Query,
+    from: Option<u64>,
+    forward: bool,
+) -> Option<u64> {
+    if query.is_empty() {
+        return None;
+    }
+    find_from(doc, from, forward, |e: &&LogEntry| {
+        filter.shows(e) && query.matches_entry(e)
+    })
+}
+
+/// How many entries the search matches (other filters applied).
+pub fn count_matches(doc: &LogDocument, filter: &Filter, query: &Query) -> usize {
+    if query.is_empty() {
+        return 0;
+    }
+    doc.entries()
+        .iter()
+        .filter(|e| filter.shows(e) && query.matches_entry(e))
+        .count()
+}
+
+/// The first entry after (or before) `from` that passes `test`, wrapping.
+fn find_from(
+    doc: &LogDocument,
+    from: Option<u64>,
+    forward: bool,
+    test: impl Fn(&&LogEntry) -> bool,
+) -> Option<u64> {
+    let is_problem = test;
     let entries = doc.entries();
     let start = from.map(|id| id as usize);
     if forward {
@@ -458,9 +512,18 @@ mod tests {
                     .with_location(SourceRef::new("Assets/Enemies/Spawner.cs").with_line(9)),
             ]);
         let filter = Filter::default();
-        assert!(filter.matches(&entry, "spawner.tick"));
-        assert!(filter.matches(&entry, "enemies/"));
-        assert!(!filter.matches(&entry, "player"));
+        let q = |text: &str| Query::compile(text, false, false);
+        assert!(filter.matches(&entry, &q("spawner.tick")));
+        assert!(filter.matches(&entry, &q("enemies/")));
+        assert!(!filter.matches(&entry, &q("player")));
+        let highlight_only = Filter {
+            search_filters: false,
+            ..Filter::default()
+        };
+        assert!(
+            highlight_only.matches(&entry, &q("player")),
+            "highlight-only hides nothing"
+        );
     }
 
     #[test]
@@ -481,6 +544,56 @@ mod tests {
             ..Filter::default()
         };
         assert_eq!(find_problem(&doc, &errors_only, Some(3), true), Some(3));
+    }
+
+    #[test]
+    fn a_filtering_search_opens_collapsed_sections() {
+        let doc = sample();
+        let index = DocIndex::new(&doc);
+        let collapsed = HashSet::from([0]);
+        let search = Filter {
+            search: "save".to_owned(),
+            ..Filter::default()
+        };
+        assert_eq!(
+            render(&build_rows(&doc, &index, &search, &collapsed), &doc),
+            ["[Play mode #1]", "  Save failed"],
+            "the match inside the collapsed section is shown"
+        );
+        let highlight_only = Filter {
+            search_filters: false,
+            ..search
+        };
+        assert_eq!(
+            render(&build_rows(&doc, &index, &highlight_only, &collapsed), &doc),
+            ["[Play mode #1]", "CS0618: obsolete"],
+            "highlight-only keeps the user's collapsed sections"
+        );
+    }
+
+    #[test]
+    fn match_navigation_and_count() {
+        let doc = sample();
+        let filter = Filter::default();
+        let query = Query::compile("loaded", false, false);
+        // "Loaded 3 items" (id 1) and "Loaded 7 items" (id 2).
+        assert_eq!(count_matches(&doc, &filter, &query), 2);
+        assert_eq!(find_match(&doc, &filter, &query, None, true), Some(1));
+        assert_eq!(find_match(&doc, &filter, &query, Some(1), true), Some(2));
+        assert_eq!(
+            find_match(&doc, &filter, &query, Some(2), true),
+            Some(1),
+            "wraps"
+        );
+        assert_eq!(
+            find_match(&doc, &filter, &query, Some(1), false),
+            Some(2),
+            "wraps back"
+        );
+        assert_eq!(find_match(&doc, &filter, &Query::Empty, None, true), None);
+        // Chatter hidden by the noise filter is not a match.
+        let chatter = Query::compile("chatter", false, false);
+        assert_eq!(count_matches(&doc, &filter, &chatter), 0);
     }
 
     #[test]

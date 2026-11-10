@@ -5,7 +5,8 @@
 //! - `COMTE_SCREENSHOT=out.png`: once a log is loaded, save a screenshot and quit.
 //! - `COMTE_SELECT=problem`: select the first warning or error after loading;
 //!   `COMTE_SELECT=verdict`: follow the overview's "Show it" link.
-//! - `COMTE_SEARCH=text`: start with this search text.
+//! - `COMTE_SEARCH=text`: start with this search text; `COMTE_SEARCH_MODE=highlight`
+//!   only highlights, `=regex` treats it as a regular expression.
 //! - `COMTE_NOISE=1`: start with engine noise shown.
 //! - `COMTE_OPEN_SAVE=1`: open the "Save session" dialog after loading, with
 //!   `COMTE_SAVE_NOTE`, `COMTE_SAVE_TAGS` and `COMTE_SAVE_EXTRA` ("Also redact") prefilled.
@@ -34,6 +35,7 @@ pub struct DevHooks {
     pub select_problem: bool,
     pub select_verdict: bool,
     pub search: Option<String>,
+    pub search_mode: Option<String>,
     pub show_noise: bool,
     pub open_save: bool,
     pub save_note: Option<String>,
@@ -59,6 +61,7 @@ impl DevHooks {
             select_problem: var("COMTE_SELECT").as_deref() == Some("problem"),
             select_verdict: var("COMTE_SELECT").as_deref() == Some("verdict"),
             search: var("COMTE_SEARCH"),
+            search_mode: var("COMTE_SEARCH_MODE"),
             show_noise: var("COMTE_NOISE").as_deref() == Some("1"),
             open_save: var("COMTE_OPEN_SAVE").as_deref() == Some("1")
                 || var("COMTE_SAVE_TO").is_some(),

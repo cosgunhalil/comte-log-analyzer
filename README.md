@@ -22,6 +22,10 @@ paste a short report into Jira or Slack.
     Play mode #n, Scene #n, Crash and Shutdown.
   - Engine chatter (licensing, package manager, Mono) is hidden.
   - Repeated messages collapse into one row with a count (×95).
+  - Search finds entries containing all your words, anywhere in the message,
+    details, stack frames or file paths. `"a phrase"` matches exactly, `-word`
+    excludes, and there are case and regex toggles. Matches are highlighted,
+    and ▽ switches between hiding non-matches and only highlighting them.
   - Stack traces show your code in bold and fold the engine frames.
   - Unity rich text in your own logs (`<color=cyan>`, `<b>`, `<i>`) is shown
     in color, as in Unity's console.
@@ -91,6 +95,8 @@ comte --report path/to/Player.log --slack
 | F8 / Shift+F8 | Next / previous warning or error |
 | ↑ / ↓, Esc | Move / clear the selection |
 | Ctrl+F | Search messages, files and stack frames |
+| Enter / Shift+Enter, F3 / Shift+F3 | Next / previous search match |
+| Esc (in the search box) | Clear the search |
 | Ctrl+E, double-click | Open the selected entry's file in your editor |
 | Ctrl+S | Save the log as a session with a note and tags |
 | Ctrl+O, F5 | Open a file, reload |
