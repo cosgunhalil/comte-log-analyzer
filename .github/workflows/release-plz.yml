@@ -1,0 +1,80 @@
+# Automated versioning: keeps a Release PR open with the next version (computed
+# from Conventional Commits) and the changelog. Merging that PR creates the v*
+# tag, which triggers release.yml to build and publish the Windows binaries.
+#
+# Uses the RELEASE_PLZ_TOKEN secret (a fine-grained PAT) instead of the default
+# GITHUB_TOKEN, because tags created with GITHUB_TOKEN do not trigger other
+# workflows: release.yml would never fire. See RELEASING.md for the setup.
+
+name: Release-plz
+
+permissions:
+  pull-requests: write
+  contents: write
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  # Creates or updates the Release PR after every push to master.
+  release-pr:
+    name: Release PR
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Ensure RELEASE_PLZ_TOKEN is configured
+        env:
+          TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::The RELEASE_PLZ_TOKEN repository secret is missing. Create a fine-grained PAT (Contents + Pull requests, read/write) and add it as a secret. See RELEASING.md."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Update the Release PR
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+  # After the Release PR merges, this sees the new version in Cargo.toml and
+  # pushes the v* tag (which fires release.yml).
+  release:
+    name: Tag release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure RELEASE_PLZ_TOKEN is configured
+        env:
+          TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::The RELEASE_PLZ_TOKEN repository secret is missing. Create a fine-grained PAT (Contents + Pull requests, read/write) and add it as a secret. See RELEASING.md."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Tag the release
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}

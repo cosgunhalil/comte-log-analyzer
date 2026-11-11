@@ -15,6 +15,23 @@ A Windows desktop app that turns Unity's noisy `Editor.log` and `Player.log` int
 
 With no file given, the app opens your current Unity `Editor.log`. Drop any other log onto the window, or press Ctrl+O.
 
+<details>
+<summary>Windows warns about the download?</summary>
+
+The executables aren't code-signed yet, so SmartScreen may ask you to confirm,
+and Defender's machine-learning checks sometimes flag a new, unsigned release
+(a false positive; each one is reported to Microsoft). Every release is built
+by [GitHub Actions](https://github.com/cosgunhalil/comte-log-analyzer/actions)
+straight from the tagged source, and you can check that a zip came from there
+with the [GitHub CLI](https://cli.github.com):
+
+```bash
+gh attestation verify comte-log-analyzer-v0.1.0-windows-x64.zip --repo cosgunhalil/comte-log-analyzer
+```
+
+Or build it yourself from source.
+</details>
+
 ## Will it read my log?
 
 - **Windows only for now.** macOS and Linux log locations are wired up but untested, so no builds are offered for them yet.
@@ -205,8 +222,9 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-CI runs both on every push and pull request, and builds the Windows release
-when a `v*` tag is pushed.
+CI runs both on every push and pull request. Releases are built and published
+by CI from version tags: see [RELEASING.md](RELEASING.md) for the versioning
+rules and the pipeline, and [CHANGELOG.md](CHANGELOG.md) for the history.
 
 - **Snapshot tests** use [insta](https://insta.rs/); review changes with `cargo insta review`.
 - **Visual checks:** the app can screenshot itself in a given state. See `crates/comte-app/src/devtools.rs` for the `COMTE_*` variables. For example:

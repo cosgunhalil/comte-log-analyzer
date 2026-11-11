@@ -1,9 +1,12 @@
+# Continuous integration: formatting, clippy and the full test suite on every
+# push and pull request, plus a check that the code still builds on the
+# minimum supported Rust. Releases are built by release.yml.
+
 name: CI
 
 on:
   push:
     branches: [master]
-    tags: ["v*"]
   pull_request:
 
 permissions:
@@ -15,6 +18,7 @@ env:
 jobs:
   test:
     name: Test and lint
+    # Windows is the target platform, so CI matches it.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,30 +38,3 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets --locked
-
-  release:
-    name: Windows release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, msrv]
-    runs-on: windows-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --locked
-      - name: Package
-        shell: pwsh
-        run: |
-          $name = "comte-log-analyzer-${{ github.ref_name }}-windows-x64"
-          New-Item -ItemType Directory $name | Out-Null
-          Copy-Item target/release/comte-log-analyzer.exe, target/release/comte.exe, README.md, LICENSE-MIT, LICENSE-APACHE $name
-          Compress-Archive -Path $name -DestinationPath "$name.zip"
-          $notes = "docs/release-notes/${{ github.ref_name }}.md"
-          if (-not (Test-Path $notes)) { "Release ${{ github.ref_name }}" | Set-Content -Encoding utf8 release-notes.md; $notes = "release-notes.md" }
-          "NOTES=$notes" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: comte-log-analyzer-*-windows-x64.zip
-          body_path: ${{ env.NOTES }}

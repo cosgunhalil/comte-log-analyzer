@@ -1,0 +1,38 @@
+# release-plz configuration (https://release-plz.dev).
+#
+# Comte Log Analyzer is a desktop application, not a library: nothing is
+# published to crates.io, and the GitHub Release itself (with the Windows zip
+# attached) is created by .github/workflows/release.yml when the version tag
+# appears. release-plz only computes the next version from the Conventional
+# Commits since the last release, maintains CHANGELOG.md, keeps the Release PR
+# up to date, and creates the v* tag when that PR merges.
+#
+# The workspace has three crates sharing one version ([workspace.package]).
+# Only the app (comte-app) is released: one tag, one changelog at the root
+# that also lists the changes to the core and Unity crates.
+
+[workspace]
+# No crates.io publishing (a binary application).
+publish = false
+# Find the last release from our v* tags, never from crates.io (where a crate
+# with the same name could belong to someone else).
+git_only = true
+# Only the tag; release.yml creates the GitHub Release with the built zip.
+git_release_enable = false
+# API-compatibility checks are meaningless for an application.
+semver_check = false
+changelog_update = true
+
+[[package]]
+name = "comte-app"
+changelog_path = "CHANGELOG.md"
+changelog_include = ["comte-core", "comte-unity"]
+git_tag_name = "v{{ version }}"
+
+[[package]]
+name = "comte-core"
+release = false
+
+[[package]]
+name = "comte-unity"
+release = false

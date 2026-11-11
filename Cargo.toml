@@ -28,7 +28,10 @@ missing_debug_implementations = "warn"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 
+# Debug info is stripped but the symbol table is kept, and LTO is thin rather
+# than fat: fully stripped, densely fused binaries look "packed" to antivirus
+# machine-learning checks and draw false positives (see RELEASING.md).
 [profile.release]
 lto = "thin"
 codegen-units = 1
-strip = true
+strip = "debuginfo"

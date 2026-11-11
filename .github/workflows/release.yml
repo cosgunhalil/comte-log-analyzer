@@ -1,0 +1,77 @@
+# Release pipeline: pushing a version tag (v0.1.0, v1.2.3, …) tests and builds
+# the Windows binaries, zips them, and publishes a GitHub Release with the zip
+# attached. Release notes come from docs/release-notes/<tag>.md when that file
+# exists, otherwise GitHub generates them from the commits.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# contents: create the release and upload the zip.
+# id-token + attestations: sign build provenance for the zip.
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-publish:
+    name: Build and publish
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # The tag must name the version the binaries report.
+      - name: Check the tag matches Cargo.toml
+        shell: pwsh
+        run: |
+          $version = (cargo metadata --format-version 1 --no-deps --locked | ConvertFrom-Json).packages |
+            Where-Object name -eq 'comte-app' | Select-Object -ExpandProperty version
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            Write-Error "Tag ${{ github.ref_name }} does not match Cargo.toml version $version"
+            exit 1
+          }
+
+      # Never ship from a commit that fails the suite, even if CI was skipped.
+      - name: Tests
+        run: cargo test --workspace --locked
+
+      - name: Build release binaries
+        run: cargo build --release --locked
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "comte-log-analyzer-${{ github.ref_name }}-windows-x64"
+          New-Item -ItemType Directory $name | Out-Null
+          Copy-Item target/release/comte-log-analyzer.exe, target/release/comte.exe, README.md, LICENSE-MIT, LICENSE-APACHE $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          "ZIP_NAME=$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # Signed provenance: anyone can verify the zip was built by this workflow
+      # from this repository (gh attestation verify <zip> --repo <owner/repo>).
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ${{ env.ZIP_NAME }}
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = "docs/release-notes/${{ github.ref_name }}.md"
+          $ghArgs = @("${{ github.ref_name }}", $env:ZIP_NAME, "--title", "Comte Log Analyzer ${{ github.ref_name }}")
+          if (Test-Path $notes) { $ghArgs += @("--notes-file", $notes) } else { $ghArgs += "--generate-notes" }
+          gh release create @ghArgs
