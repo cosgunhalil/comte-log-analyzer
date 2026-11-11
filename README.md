@@ -10,7 +10,7 @@ A Windows desktop app that turns Unity's noisy `Editor.log` and `Player.log` int
 
 ## Install and run
 
-- **Windows:** download the zip from the [latest release](https://github.com/cosgunhalil/comte-log-analyzer/releases/latest), unzip it, and run `comte-log-analyzer.exe`.
+- **Windows:** download `comte-log-analyzer-…-windows-x64.exe` from the [latest release](https://github.com/cosgunhalil/comte-log-analyzer/releases/latest) and run it. The `.zip` next to it also has the `comte` command line.
 - **From source** (Rust 1.95 or newer, edition 2024, MSVC toolchain): `cargo install --locked --git https://github.com/cosgunhalil/comte-log-analyzer comte-app`
 
 With no file given, the app opens your current Unity `Editor.log`. Drop any other log onto the window, or press Ctrl+O.
@@ -26,7 +26,7 @@ straight from the tagged source, and you can check that a zip came from there
 with the [GitHub CLI](https://cli.github.com):
 
 ```bash
-gh attestation verify comte-log-analyzer-v0.1.2-windows-x64.zip --repo cosgunhalil/comte-log-analyzer
+gh attestation verify comte-log-analyzer-v0.1.3-windows-x64.exe --repo cosgunhalil/comte-log-analyzer
 ```
 
 Or build it yourself from source.
@@ -222,9 +222,10 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-CI runs both on every push and pull request. Releases are built and published
-by CI from version tags: see [RELEASING.md](RELEASING.md) for the versioning
-rules and the pipeline, and [CHANGELOG.md](CHANGELOG.md) for the history.
+CI runs both on every push and pull request. To release, run
+`./scripts/release.ps1` and push the tag it creates; CI builds and publishes
+the exe. See [RELEASING.md](RELEASING.md) for the details and
+[CHANGELOG.md](CHANGELOG.md) for the history.
 
 - **Snapshot tests** use [insta](https://insta.rs/); review changes with `cargo insta review`.
 - **Visual checks:** the app can screenshot itself in a given state. See `crates/comte-app/src/devtools.rs` for the `COMTE_*` variables. For example:
