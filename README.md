@@ -26,7 +26,7 @@ straight from the tagged source, and you can check that a zip came from there
 with the [GitHub CLI](https://cli.github.com):
 
 ```bash
-gh attestation verify comte-log-analyzer-v0.1.0-windows-x64.zip --repo cosgunhalil/comte-log-analyzer
+gh attestation verify comte-log-analyzer-v0.1.2-windows-x64.zip --repo cosgunhalil/comte-log-analyzer
 ```
 
 Or build it yourself from source.

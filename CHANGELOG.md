@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0](https://github.com/cosgunhalil/comte-log-analyzer/releases/tag/v0.1.0) - 2026-11-11
+## [0.1.2](https://github.com/cosgunhalil/comte-log-analyzer/releases/tag/v0.1.2) - 2026-11-11
+
+The first published release. The `v0.1.0` and `v0.1.1` tags were cut while the
+release pipeline was being set up and have no builds.
 
 ### Added
 
@@ -34,3 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(test)* make fixture tests independent of line endings
+
+### Other
+
+- *(ci)* release pipeline with release-plz, build provenance and a tag check

@@ -26,6 +26,11 @@ fn report(name: &str, parser: &mut dyn LogParser, style: ReportStyle) -> String 
         },
         style,
     )
+    // The footer names the app version; keep snapshots stable across releases.
+    .replace(
+        &format!("Comte Log Analyzer {}", env!("CARGO_PKG_VERSION")),
+        "Comte Log Analyzer <version>",
+    )
 }
 
 #[test]

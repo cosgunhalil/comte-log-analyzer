@@ -73,17 +73,23 @@ therefore needs a personal access token:
 
 ## Manual fallback (and the first release)
 
-The automated path is optional; a hand-cut release always works, and v0.1.0
-is cut this way:
+The automated path is optional; a hand-cut release always works (v0.1.2, the
+first published release, was cut this way):
+
+1. Bump `version` in `[workspace.package]` of the root `Cargo.toml`, run
+   `cargo update -w` so `Cargo.lock` follows, and update `CHANGELOG.md`.
+   Commit as `chore(release): vX.Y.Z`.
+2. Tag **that** commit and push the tag:
 
 ```bash
-git tag v0.1.0
+git tag v0.1.2
 ```
 
 ```bash
-git push origin v0.1.0
+git push origin v0.1.2
 ```
 
-For later manual releases, bump `version` in `[workspace.package]` first
-(commit as `chore(release): vX.Y.Z`) so the tag and the manifest agree.
-`release.yml` takes it from there.
+`release.yml` takes it from there. Tagging before the bump is committed (or
+tagging an older commit) is refused: "Tag vX.Y.Z does not match Cargo.toml
+version". The `v0.1.0` and `v0.1.1` tags are examples; they stay without
+releases, since published tags are never moved or deleted.

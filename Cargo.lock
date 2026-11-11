@@ -653,7 +653,7 @@ dependencies = [
 
 [[package]]
 name = "comte-app"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "comte-core",
@@ -673,14 +673,14 @@ dependencies = [
 
 [[package]]
 name = "comte-core"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "regex",
 ]
 
 [[package]]
 name = "comte-unity"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "comte-core",
  "insta",
