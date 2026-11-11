@@ -11,10 +11,40 @@ fn parse(text: &str) -> LogDocument {
     parse_reader(Cursor::new(text.to_owned()), &mut EditorParser::new()).unwrap()
 }
 
+/// Logs written on Windows can use CRLF: they must read exactly like LF ones.
+#[test]
+fn crlf_logs_parse_like_lf_logs() {
+    for name in ["editor_session.log", "player_session.log"] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name);
+        let lf = std::fs::read_to_string(path).unwrap().replace("\r\n", "\n");
+        let crlf = lf.replace('\n', "\r\n");
+        let parser = || -> Box<dyn comte_core::LogParser> {
+            if name.starts_with("player") {
+                Box::new(comte_unity::PlayerParser::new())
+            } else {
+                Box::new(EditorParser::new())
+            }
+        };
+        let a = parse_reader(Cursor::new(lf), parser().as_mut()).unwrap();
+        let b = parse_reader(Cursor::new(crlf), parser().as_mut()).unwrap();
+        assert_eq!(a.entries(), b.entries(), "{name}");
+        assert_eq!(a.sections().len(), b.sections().len(), "{name}");
+        assert_eq!(a.facts(), b.facts(), "{name}");
+        assert_eq!(a.hints(), b.hints(), "{name}");
+        assert!(
+            b.entries().iter().all(|e| !e.message.contains('\r')),
+            "{name}: no stray carriage returns"
+        );
+    }
+}
+
 #[test]
 fn fixed_and_introduced_problems_between_runs() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/editor_session.log");
-    let before = std::fs::read_to_string(path).unwrap();
+    // The edits below match `\n`; a CRLF checkout must not make them miss.
+    let before = std::fs::read_to_string(path).unwrap().replace("\r\n", "\n");
     // Run B: the CS0103 compile error is fixed (and the build succeeds),
     // the save error moved 4 lines down, and a new exception appears.
     let after = before

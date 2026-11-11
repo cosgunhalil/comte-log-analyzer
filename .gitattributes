@@ -1,0 +1,4 @@
+# Test fixtures and snapshots are compared byte for byte: keep them LF on
+# every checkout, whatever core.autocrlf says (Windows CI runners use true).
+crates/comte-unity/tests/fixtures/** text eol=lf
+**/snapshots/*.snap text eol=lf
