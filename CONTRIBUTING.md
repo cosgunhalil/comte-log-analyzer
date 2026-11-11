@@ -11,6 +11,9 @@ change has to pass, and the few rules that keep logs and releases safe.
   the app. `cargo build` also builds `comte`, the command-line version, which
   is handy for checking a parser change on a log:
   `cargo run -p comte-app --bin comte -- --summary path/to/Player.log`.
+- `cargo build --release` puts both programs in `target/release`:
+  `comte-log-analyzer.exe [log file]` (the app) and `comte.exe` (the command
+  line, described in the [user guide](docs/USAGE.md#command-line)).
 - Your settings and timing history live in `%APPDATA%\ComteLogAnalyzer\config`,
   not in the repository.
 
@@ -79,10 +82,17 @@ changes.
 - **Snapshot tests** use [insta](https://insta.rs/); review changes with
   `cargo insta review` and commit the updated `.snap` files.
 - **Redaction** changes need a test for what is now masked and for what must
-  stay (shared folders such as `C:\Users\Public` are not people).
+  stay (shared folders such as `C:\Users\Public` are not people). To check a
+  real log of your own without committing it,
+  `COMTE_REAL_LOG=<a real log> cargo test -p comte-app -- --ignored` verifies
+  that no trace of your user name is left after redaction.
 - **UI changes** are checked by running the app. It can screenshot itself in a
   given state; see the `COMTE_*` variables in
-  `crates/comte-app/src/devtools.rs`.
+  `crates/comte-app/src/devtools.rs`. For example:
+
+  ```bash
+  COMTE_SELECT=problem COMTE_SCREENSHOT=shot.png cargo run -p comte-app --bin comte-log-analyzer -- crates/comte-unity/tests/fixtures/player_session.log
+  ```
 
 ## Pull requests
 
