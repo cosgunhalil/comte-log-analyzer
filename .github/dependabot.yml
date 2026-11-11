@@ -1,0 +1,33 @@
+# Dependabot version updates: weekly pull requests that keep the Rust crates
+# and the GitHub Actions used by the workflows up to date. (Security alerts
+# for known vulnerabilities are a separate switch: Settings → Code security.)
+#
+# Commit prefixes follow Conventional Commits, so scripts/release.ps1 lists
+# these under "Other" in the changelog.
+
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # egui, eframe and their sibling crates move in lockstep.
+      egui:
+        patterns: ["egui*", "eframe", "epaint*", "emath", "ecolor"]
+      # Small compatible updates arrive together in one PR.
+      patch-and-minor:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions:
+        patterns: ["*"]

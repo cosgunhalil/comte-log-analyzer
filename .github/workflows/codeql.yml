@@ -1,0 +1,48 @@
+# Code scanning with CodeQL: the Rust code and the GitHub Actions workflows,
+# on every push and pull request to master and once a week (new queries find
+# new problems in old code). Results appear under Security → Code scanning.
+#
+# This is CodeQL's "advanced setup". Don't also turn on "default setup" in
+# Settings → Code security: GitHub runs one or the other.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: "27 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # CodeQL reads Rust source without compiling it.
+          - language: rust
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"

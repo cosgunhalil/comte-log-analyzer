@@ -239,6 +239,11 @@ the exe. See [RELEASING.md](RELEASING.md) for the details and
 Never commit real logs: they contain user names, tokens and machine ids.
 `samples/private/` is git-ignored for local samples.
 
+## Security
+
+Found a security problem, such as a value the redaction misses? Please report
+it privately, as described in [SECURITY.md](SECURITY.md), not in a public issue.
+
 ## License
 
 Licensed under either of
