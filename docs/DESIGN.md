@@ -622,7 +622,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 
 ## 12. Conventions
 
-- Rust edition 2024, MSRV 1.88; `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
+- Rust edition 2024, MSRV 1.95 (set by egui/eframe 0.37); `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
 - **The assistant never commits.** Each task ends with a suggested [Conventional Commits](https://www.conventionalcommits.org/) message.
 - Real logs never go into the repo. Fixtures are trimmed and redacted, and `samples/private/` is git-ignored.
 

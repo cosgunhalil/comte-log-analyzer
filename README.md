@@ -2,17 +2,39 @@
 
 # Comte Log Analyzer
 
-*« Savoir pour prévoir »* (Auguste Comte): know the log so you can predict the bug.
+A Windows desktop app that turns Unity's noisy `Editor.log` and `Player.log` into something a person can read.
 
-Comte Log Analyzer is a Windows desktop app that turns Unity's noisy `Editor.log` and
-`Player.log` into something a person can read. It shows a timeline of what
-happened, which problems occurred and how often, and where in your code they
-started. You can save a log with a note to share it, compare two runs, and
-paste a short report into Jira or Slack.
+*« Savoir pour prévoir »* (Auguste Comte): know the log so you can predict the bug.
 
 ![Overview of a Player log that crashed](docs/images/overview.png)
 
+## Install and run
+
+- **Windows:** download the zip from the [latest release](https://github.com/cosgunhalil/comte-log-analyzer/releases/latest), unzip it, and run `comte-log-analyzer.exe`.
+- **From source** (Rust 1.95 or newer, edition 2024, MSVC toolchain): `cargo install --locked --git https://github.com/cosgunhalil/comte-log-analyzer comte-app`
+
+With no file given, the app opens your current Unity `Editor.log`. Drop any other log onto the window, or press Ctrl+O.
+
+## Will it read my log?
+
+- **Windows only for now.** macOS and Linux log locations are wired up but untested, so no builds are offered for them yet.
+- **Player.log:** tested with logs from 25 games built with Unity 2019.4, 2020.3, 2021.3, 2022.3 and Unity 6 (6000.0, 6000.2 and 6000.3).
+- **Editor.log:** tested with Unity 6000.3. Older Editor logs use the same building blocks, but they haven't been checked against real files yet.
+
 ## What it does
+
+- **Finds your logs on its own:** `Editor.log`, `Editor-prev.log` and every game's `Player.log` under `AppData\LocalLow`, plus related logs such as `upm.log` and the import workers' logs.
+- **Turns them into a readable timeline:** Startup, compiles, domain reloads, Play mode and scenes, with engine chatter hidden and repeats collapsed (×95).
+- **Explains what went wrong:** a one-line verdict ("Crashed in Scene #3"), native crashes traced to a GPU driver, your IL2CPP code, the engine or a plugin, and known problems such as out of memory or a removed graphics device. It also says where Unity got stuck: "⏳ Stopped while importing Assets/Hero.fbx".
+- **Opens logs too large for an editor:** runaway logs of many gigabytes open from their end, and the message that filled the file is named.
+- **Saves, shares and compares:** sessions with notes, tags and pins, redacted by default; a support pack zip for developers; Markdown or Slack reports; and a comparison with the previous run.
+- **Takes you to the code:** click `TurnView.cs:98` (or press Ctrl+E) and the file opens at that line in Rider, VS Code or Visual Studio.
+
+![Details of an exception with links into the project](docs/images/details.png)
+
+![Comparing the previous and the current Editor run](docs/images/compare.png)
+
+## All features
 
 - **Finds your logs.** `Editor.log`, `Editor-prev.log`, and every game's
   `Player.log` / `Player-prev.log` under `AppData\LocalLow`. Drop any other
@@ -90,13 +112,14 @@ paste a short report into Jira or Slack.
   Pins are listed on the left, saved with the session and included in
   reports, so whoever opens the file sees what you saw.
 
-![Details of an exception with links into the project](docs/images/details.png)
+[`docs/DESIGN.md`](docs/DESIGN.md) describes each feature in detail, along
+with the parsing rules learned from real logs.
 
-![Comparing the previous and the current Editor run](docs/images/compare.png)
+## Building from source
 
-## Getting started
-
-You need [Rust](https://rustup.rs/) 1.88 or newer on Windows (MSVC toolchain).
+You need [Rust](https://rustup.rs/) 1.95 or newer on Windows (MSVC toolchain).
+That minimum comes from the GUI library (egui/eframe 0.37); the code itself
+uses edition 2024 and `if let … && …` chains.
 
 ```bash
 cargo run --release -p comte-app --bin comte-log-analyzer
@@ -172,9 +195,6 @@ Settings are stored in `%APPDATA%\ComteLogAnalyzer\config\settings.toml`.
 | `crates/comte-unity` | Unity support: Editor and Player parsers, stack frame cleanup, log discovery. Sanitized test logs live in `tests/fixtures`. |
 | `crates/comte-app` | The desktop app (egui) and the `comte` command line. |
 
-[`docs/DESIGN.md`](docs/DESIGN.md) describes the design, the parsing rules
-learned from real logs, and the milestones.
-
 ## Development
 
 ```bash
@@ -184,6 +204,9 @@ cargo test --workspace
 ```bash
 cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+CI runs both on every push and pull request, and builds the Windows release
+when a `v*` tag is pushed.
 
 - **Snapshot tests** use [insta](https://insta.rs/); review changes with `cargo insta review`.
 - **Visual checks:** the app can screenshot itself in a given state. See `crates/comte-app/src/devtools.rs` for the `COMTE_*` variables. For example:
@@ -196,3 +219,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 Never commit real logs: they contain user names, tokens and machine ids.
 `samples/private/` is git-ignored for local samples.
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in the work by you, as defined in the Apache-2.0
+license, shall be dual licensed as above, without any additional terms or
+conditions.

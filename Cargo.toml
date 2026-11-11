@@ -6,9 +6,14 @@ default-members = ["crates/comte-app"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 authors = ["Halil Cosgun"]
 description = "Comte Log Analyzer: a human-friendly log analyzer for game engines."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/cosgunhalil/comte-log-analyzer"
+homepage = "https://github.com/cosgunhalil/comte-log-analyzer"
+keywords = ["unity", "log-analyzer", "gamedev", "crash", "debugging"]
+categories = ["development-tools", "game-development"]
 
 [workspace.dependencies]
 comte-core = { path = "crates/comte-core" }
