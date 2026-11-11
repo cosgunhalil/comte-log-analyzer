@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest an idea for Comte Log Analyzer
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the situation where you miss this feature.
+      placeholder: When a build fails on the CI machine I only have the Editor.log, and I can't tell which asset made the build so big.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like to happen?
+      description: Describe the feature as you imagine using it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Other ways to solve the same problem, if any.
+  - type: input
+    id: engine
+    attributes:
+      label: Engine and version, if it matters
+      description: Unity (and its version), or another engine you'd like supported.
+      placeholder: Unity 2022.3

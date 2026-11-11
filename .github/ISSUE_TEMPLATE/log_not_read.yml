@@ -1,0 +1,56 @@
+name: Log isn't read correctly
+description: A Unity log is shown wrongly (missed errors, wrong sections or timings, a wrong verdict or hint)
+title: "log: "
+labels: ["parser"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste a whole real log.** Logs contain user names, licence tokens, machine names and player ids.
+        **Copy lines** in Comte Log Analyzer copies the lines exactly as they are: replace user names, tokens and paths before posting. A saved session (Ctrl+S) is redacted by default and can be attached instead; still check it first.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Which log?
+      options:
+        - Editor.log
+        - Player.log
+        - Another file (opened by hand)
+    validations:
+      required: true
+  - type: input
+    id: unity
+    attributes:
+      label: Unity version
+      description: In the app's Environment section ("Engine version"), or the first lines of the log.
+      placeholder: 6000.3.11f1
+    validations:
+      required: true
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What is shown wrongly?
+      placeholder: The NullReferenceException at line 120 is listed as Info, and the play mode section never ends.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should it show?
+    validations:
+      required: true
+  - type: textarea
+    id: excerpt
+    attributes:
+      label: The lines involved (scrubbed)
+      description: The few log lines around the problem, with names, tokens and paths replaced. A handful of lines is usually enough.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Comte Log Analyzer version
+      placeholder: v0.1.3
+    validations:
+      required: true

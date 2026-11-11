@@ -239,6 +239,12 @@ the exe. See [RELEASING.md](RELEASING.md) for the details and
 Never commit real logs: they contain user names, tokens and machine ids.
 `samples/private/` is git-ignored for local samples.
 
+## Contributing
+
+Bug reports, log samples that are read wrongly, and pull requests are welcome.
+[CONTRIBUTING.md](CONTRIBUTING.md) explains how to build, test and submit a
+change; everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Security
 
 Found a security problem, such as a value the redaction misses? Please report

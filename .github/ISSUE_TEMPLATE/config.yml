@@ -1,0 +1,7 @@
+# Issues must use one of the templates; security problems go to private
+# reporting instead of a public issue.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/cosgunhalil/comte-log-analyzer/security/advisories/new
+    about: For example a user name or token the redaction misses. Please don't open a public issue.
