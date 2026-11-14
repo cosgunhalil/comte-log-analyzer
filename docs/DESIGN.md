@@ -43,6 +43,11 @@ Comte Log Analyzer is a Windows desktop log analyzer for game engines, written i
 - **File-kind detection** (`comte_core::detect_engine` + `EngineSupport::detect`): read the first 64 lines and ask each engine in turn. A file no engine recognizes opens with the plain-text parser. File names are never trusted, because testers rename files.
 - macOS and Linux roots are wired up in the locator but untested (see §13).
 - Logs that players and QA send usually arrive as loose files, so drag and drop is a first-class way to open one.
+- **Keeping the lists in step with the disk** (`comte-app::files`):
+  - Every 2 seconds, Player logs and saved sessions whose file is gone leave the left panel, and the status bar says which. The Editor logs stay listed, greyed out, because they are Unity's fixed locations.
+  - When the window regains focus, logs and sessions are discovered again, so new ones appear too.
+  - If the open log's file is deleted, live tail stops and a banner offers **Save session…** (the loaded copy is all that is left) or **Close it**. The left panel marks it "· deleted", and Reload and 📂 are disabled.
+- **Show in folder:** 📂 next to the log's name in the toolbar, **Show in folder** in the overview header, and a right-click menu on every log and session (**Show in folder**, **Copy path**). On Windows this runs `explorer /select,"<absolute path>"`, passing that argument raw so the quotes wrap only the path. macOS uses `open -R`, and Linux opens the folder.
 - **Companion logs** (`EngineSupport::companions`, Unity's in `comte_unity::companions`): files and folders on this machine with more detail. They are found when a log loads (and on live updates), and only ones that exist are kept. Saved sessions get none, because they were made elsewhere. Editor logs only:
 
   | Companion | Where | Topic |

@@ -15,6 +15,14 @@ line. For how each feature works inside, see [DESIGN.md](DESIGN.md).
 - **Finds your logs.** `Editor.log`, `Editor-prev.log`, and every game's
   `Player.log` / `Player-prev.log` under `AppData\LocalLow`. Drop any other
   file onto the window, or open it with Ctrl+O.
+- **Shows where a log is.** 📂 next to the log's name (in the toolbar and the
+  overview) opens its folder with the file selected. Right-click any log or
+  saved session on the left for **Show in folder** or **Copy path**.
+- **Keeps the list honest.** A log or saved session deleted from the disk
+  leaves the list within a few seconds, and new logs appear when you come back
+  to the window. If the open log itself is deleted, a banner says so: what
+  you see is the copy already loaded, which you can save as a session or
+  close.
 - **Reads them like a person would.**
   - The timeline is grouped into Startup, Script compilation, Domain reload,
     Play mode #n, Scene #n, Crash and Shutdown.

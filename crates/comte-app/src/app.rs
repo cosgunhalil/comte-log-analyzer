@@ -109,6 +109,12 @@ pub struct ComteApp {
     prev_read: HashSet<PathBuf>,
     /// Timings of a previous-run log being read in the background.
     prev_rx: Option<std::sync::mpsc::Receiver<SessionTimings>>,
+    /// When the lists were last checked against the disk, and whether the
+    /// window had focus then (regaining focus triggers a rescan).
+    files_checked: Instant,
+    had_focus: bool,
+    /// The open log's file is gone from the disk (only the loaded copy is left).
+    current_deleted: bool,
     /// The section header row ] / [ went to last (with nothing selected).
     last_section_row: Option<usize>,
     /// Scroll the list to this row (after a strip click).
@@ -202,6 +208,9 @@ impl ComteApp {
             pins: Pins::default(),
             strip: StripData::default(),
             last_section_row: None,
+            files_checked: Instant::now(),
+            had_focus: true,
+            current_deleted: false,
             history: TimingHistory::load(),
             trends: Vec::new(),
             trends_for: None,
@@ -1406,7 +1415,82 @@ impl ComteApp {
         }
     }
 
-    /// Opens a source location from the log in the chosen editor.
+    // -- files on disk -------------------------------------------------------
+
+    /// Keeps the left panel in step with the disk: every few seconds, deleted
+    /// Player logs and sessions leave the lists; when the window regains
+    /// focus, new logs are found too. Also notices the open log being deleted.
+    fn check_files(&mut self, ctx: &egui::Context) {
+        const EVERY: Duration = Duration::from_secs(2);
+        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        let regained = focused && !self.had_focus;
+        self.had_focus = focused;
+        if !regained && self.files_checked.elapsed() < EVERY {
+            ctx.request_repaint_after(EVERY);
+            return;
+        }
+        self.files_checked = Instant::now();
+        ctx.request_repaint_after(EVERY);
+
+        if regained && !self.dev.no_discovery {
+            let gone: Vec<String> = self
+                .sources
+                .iter()
+                .filter(|s| s.exists() && !s.path.is_file())
+                .map(|s| s.title.clone())
+                .collect();
+            self.sources = discover_sources();
+            self.sessions = discover_sessions(&self.sessions_dir());
+            self.announce_removed(gone);
+        } else {
+            let mut removed = crate::files::prune_sources(&mut self.sources).removed;
+            removed.extend(crate::files::prune_sessions(&mut self.sessions).removed);
+            self.announce_removed(removed);
+        }
+
+        let deleted = self.current.as_ref().is_some_and(|c| !c.path.is_file());
+        if deleted && !self.current_deleted {
+            self.stop_live();
+        }
+        self.current_deleted = deleted;
+    }
+
+    fn announce_removed(&mut self, removed: Vec<String>) {
+        let text = match removed.as_slice() {
+            [] => return,
+            [one] => format!("{one} was deleted from the disk; removed it from the list"),
+            many => format!(
+                "{} logs were deleted from the disk; removed them from the list",
+                many.len()
+            ),
+        };
+        self.notice = Some((text, Instant::now()));
+    }
+
+    /// Shows a file in the file manager, selected.
+    fn show_in_folder(&mut self, path: &Path) {
+        if !path.is_file() {
+            self.notice = Some((
+                format!("{} is no longer on the disk", path.display()),
+                Instant::now(),
+            ));
+            return;
+        }
+        if let Err(e) = crate::files::reveal(path) {
+            self.notice = Some((format!("Could not open the folder: {e}"), Instant::now()));
+        }
+    }
+
+    /// Closes the open log (after its file was deleted).
+    fn close_current(&mut self) {
+        self.stop_live();
+        self.current = None;
+        self.current_deleted = false;
+        self.compare = None;
+        self.selected = None;
+        self.rows_dirty = true;
+    }
+
     /// Opens a companion: a log in Comte Log Analyzer, a folder in the file manager.
     fn open_companion(&mut self, index: usize, ctx: &egui::Context) {
         let Some(companion) = self
@@ -1444,6 +1528,7 @@ impl ComteApp {
         ));
     }
 
+    /// Opens a source location from the log in the chosen editor.
     fn open_location(&mut self, location: &comte_core::SourceRef) {
         let roots = self.project_roots();
         let Some(file) = resolve_source(&location.path, &roots) else {
@@ -1932,8 +2017,12 @@ impl ComteApp {
             }
             let can_reload = self.current.is_some();
             if ui
-                .add_enabled(can_reload, egui::Button::new("⟳ Reload"))
+                .add_enabled(
+                    can_reload && !self.current_deleted,
+                    egui::Button::new("⟳ Reload"),
+                )
                 .on_hover_text("Read the file again (F5)")
+                .on_disabled_hover_text("The file was deleted from the disk")
                 .clicked()
             {
                 self.reload(ui.ctx());
@@ -2000,8 +2089,18 @@ impl ComteApp {
             ui.separator();
             match &self.current {
                 Some(c) => {
-                    ui.label(RichText::new(&c.title).strong());
+                    let path = c.path.clone();
+                    ui.label(RichText::new(&c.title).strong())
+                        .on_hover_text(path.display().to_string());
                     ui.label(RichText::new(&c.kind_label).weak());
+                    let deleted = self.current_deleted;
+                    let response = ui
+                        .add_enabled(!deleted, egui::Button::new("📂").small())
+                        .on_hover_text(format!("Show in folder\n{}", path.display()))
+                        .on_disabled_hover_text("The file was deleted from the disk");
+                    if response.clicked() {
+                        self.show_in_folder(&path);
+                    }
                 }
                 None => {
                     ui.label(RichText::new("No log open").weak());
@@ -2092,6 +2191,9 @@ impl ComteApp {
     fn sources_panel(&mut self, ui: &mut Ui) {
         let current_path = self.current.as_ref().map(|c| c.path.clone());
         let mut to_open: Option<(PathBuf, String)> = None;
+        // A file to show in the file manager, or whose path to copy.
+        let mut to_reveal: Option<PathBuf> = None;
+        let mut to_copy: Option<String> = None;
         // (entry, remove): a pin clicked in the list, or unpinned.
         let mut pin_action: Option<(u64, bool)> = None;
 
@@ -2128,9 +2230,11 @@ impl ComteApp {
                             ),
                             _ => format!("{}\nnot found", source.path.display()),
                         };
-                        if response.on_hover_text(tip).clicked() {
+                        let response = response.on_hover_text(tip);
+                        if response.clicked() {
                             to_open = Some((source.path.clone(), source.title.clone()));
                         }
+                        file_menu(&response, &source.path, &mut to_reveal, &mut to_copy);
                     }
                     ui.add_space(8.0);
                 }
@@ -2139,7 +2243,13 @@ impl ComteApp {
                     && !self.sources.iter().any(|s| s.path == c.path)
                 {
                     ui.label(RichText::new("OPENED FILE").small().strong().weak());
-                    let _ = ui.add(egui::Button::selectable(true, &c.title).truncate());
+                    let label = if self.current_deleted {
+                        format!("{} · deleted", c.title)
+                    } else {
+                        c.title.clone()
+                    };
+                    let response = ui.add(egui::Button::selectable(true, label).truncate());
+                    file_menu(&response, &c.path, &mut to_reveal, &mut to_copy);
                     ui.add_space(8.0);
                 }
 
@@ -2162,9 +2272,11 @@ impl ComteApp {
                     if let Some(first) = session.note.lines().next() {
                         tip.push_str(&format!("\n{first}"));
                     }
-                    if response.on_hover_text(tip).clicked() {
+                    let response = response.on_hover_text(tip);
+                    if response.clicked() {
                         to_open = Some((session.path.clone(), session.title.clone()));
                     }
+                    file_menu(&response, &session.path, &mut to_reveal, &mut to_copy);
                 }
                 ui.add_space(8.0);
 
@@ -2265,6 +2377,13 @@ impl ComteApp {
                 }
             });
 
+        if let Some(path) = to_reveal {
+            self.show_in_folder(&path);
+        }
+        if let Some(path) = to_copy {
+            ui.ctx().copy_text(path);
+            self.notice = Some(("Copied the path".to_owned(), Instant::now()));
+        }
         match pin_action {
             Some((id, false)) => self.reveal(id),
             Some((id, true)) => self.toggle_pin(id),
@@ -2603,6 +2722,46 @@ impl ComteApp {
         }
     }
 
+    /// The open log's file is gone: say so, and offer to keep or close it.
+    fn deleted_banner(&mut self, ui: &mut Ui) {
+        let warn = ui.visuals().warn_fg_color;
+        let mut save = false;
+        let mut close = false;
+        egui::Frame::new()
+            .fill(Color32::from_rgba_unmultiplied(
+                warn.r(),
+                warn.g(),
+                warn.b(),
+                28,
+            ))
+            .stroke(egui::Stroke::new(1.0, warn.gamma_multiply(0.6)))
+            .corner_radius(6.0)
+            .inner_margin(egui::Margin::same(8))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(
+                    RichText::new("🗑 This log was deleted from the disk")
+                        .strong()
+                        .color(warn),
+                );
+                ui.label(
+                    "What you see is the copy loaded into Comte Log Analyzer. Save it as a \
+                     session to keep it, or close it.",
+                );
+                ui.horizontal(|ui| {
+                    save = ui.button("💾 Save session…").clicked();
+                    close = ui.button("Close it").clicked();
+                });
+            });
+        ui.add_space(6.0);
+        if save {
+            self.open_save_dialog();
+        }
+        if close {
+            self.close_current();
+        }
+    }
+
     fn empty_state(&self, ui: &mut Ui) {
         ui.add_space(80.0);
         ui.vertical_centered(|ui| {
@@ -2708,6 +2867,11 @@ impl ComteApp {
             Some(Jump::Section(id)) => self.reveal_section(id),
             Some(Jump::CopySummary) => self.copy_summary(ui.ctx()),
             Some(Jump::OpenCompanion(i)) => self.open_companion(i, ui.ctx()),
+            Some(Jump::RevealLog) => {
+                if let Some(path) = self.current.as_ref().map(|c| c.path.clone()) {
+                    self.show_in_folder(&path);
+                }
+            }
             Some(Jump::OpenHintPath(i)) => {
                 let path = self
                     .current
@@ -2750,6 +2914,7 @@ impl eframe::App for ComteApp {
             self.on_loaded(event, &ctx);
         }
         self.update_timings(&ctx);
+        self.check_files(&ctx);
         self.handle_input(&ctx);
         let filter_before = self.filter.clone();
 
@@ -2788,6 +2953,9 @@ impl eframe::App for ComteApp {
             }
         } else {
             egui::CentralPanel::default_margins().show(ui, |ui| {
+                if self.current_deleted {
+                    self.deleted_banner(ui);
+                }
                 self.filter_bar(ui);
                 ui.separator();
                 if self.rows_dirty || self.filter != filter_before {
@@ -2913,6 +3081,30 @@ fn local_clock(millis: i64, with_millis: bool) -> String {
             }
         })
         .unwrap_or_default()
+}
+
+/// Right-click menu of a file in the left panel: show it in the file manager,
+/// or copy its path.
+fn file_menu(
+    response: &egui::Response,
+    path: &Path,
+    to_reveal: &mut Option<PathBuf>,
+    to_copy: &mut Option<String>,
+) {
+    response.context_menu(|ui| {
+        if ui
+            .add_enabled(path.is_file(), egui::Button::new("📂 Show in folder"))
+            .on_disabled_hover_text("Not on the disk")
+            .clicked()
+        {
+            *to_reveal = Some(path.to_path_buf());
+            ui.close();
+        }
+        if ui.button("Copy path").clicked() {
+            *to_copy = Some(path.display().to_string());
+            ui.close();
+        }
+    });
 }
 
 /// Width of the time column in entry rows, for logs with timestamps.

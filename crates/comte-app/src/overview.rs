@@ -26,6 +26,8 @@ pub enum Jump {
     OpenHintPath(usize),
     /// Open the companion log or folder with this index (`Loaded::companions`).
     OpenCompanion(usize),
+    /// Show the open log's file in the file manager.
+    RevealLog,
 }
 
 /// What the user did with a hint card.
@@ -115,15 +117,25 @@ pub fn overview(ui: &mut Ui, current: &Loaded, trends: &[Trend]) -> Option<Jump>
         session_card(ui, session);
     }
     ui.label(RichText::new(&current.title).size(17.0).strong());
-    ui.label(
-        RichText::new(format!(
-            "{} · {}",
-            current.kind_label,
-            current.path.display()
-        ))
-        .weak()
-        .small(),
-    );
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            RichText::new(format!(
+                "{} · {}",
+                current.kind_label,
+                current.path.display()
+            ))
+            .weak()
+            .small(),
+        );
+        if current.path.is_file()
+            && ui
+                .small_button("📂 Show in folder")
+                .on_hover_text("Open the folder with this log selected")
+                .clicked()
+        {
+            jump = Some(Jump::RevealLog);
+        }
+    });
     ui.add_space(8.0);
 
     if let Some(cut) = current.truncated {
