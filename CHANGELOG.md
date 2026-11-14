@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/cosgunhalil/comte-log-analyzer/releases/tag/v0.1.3) - 2026-11-14
+
+### Added
+
+- *(app)* show logs in their folder and drop deleted ones from the list
+
+### Other
+
+- *(ci)* release from a script-made tag with exe and zip assets
+- *(chore)* add security policy, Dependabot and CodeQL scanning
+- *(docs)* add code of conduct, contributing guide, issue and PR templates
+- *(docs)* shorten the README with feature tables and a separate user guide
+
 ## [0.1.2](https://github.com/cosgunhalil/comte-log-analyzer/releases/tag/v0.1.2) - 2026-11-11
 
 The first published release. The `v0.1.0` and `v0.1.1` tags were cut while the
