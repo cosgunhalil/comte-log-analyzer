@@ -90,6 +90,25 @@ pub fn summarize(path: &Path) -> std::io::Result<()> {
     for fact in doc.facts() {
         println!("fact:     {}: {}", fact.key.label(), fact.value);
     }
+    if !doc.build_reports().is_empty() {
+        println!("builds:");
+        for build in doc.build_reports() {
+            let sizes = if build.has_sizes() {
+                format!(
+                    "{} complete, {} assets",
+                    build
+                        .total
+                        .map_or_else(|| "?".to_owned(), comte_core::format_bytes),
+                    build.assets.len()
+                )
+            } else if build.sizes_unavailable {
+                "no sizes: incremental build".to_owned()
+            } else {
+                "no size report".to_owned()
+            };
+            println!("  L{}  {}  ({sizes})", build.line, build.label());
+        }
+    }
     println!("sections:");
     for section in doc.sections() {
         let duration = section
@@ -193,6 +212,113 @@ pub fn compare(a: &Path, b: &Path) -> std::io::Result<()> {
             f.b.as_deref().unwrap_or("-")
         );
     }
+    Ok(())
+}
+
+/// The latest build that lists sizes, and its index.
+fn latest_sized_build(loaded: &crate::loader::Loaded) -> Option<(usize, &comte_core::BuildReport)> {
+    let builds = loaded.doc.build_reports();
+    let index = builds
+        .iter()
+        .rposition(comte_core::BuildReport::has_sizes)?;
+    Some((index, &builds[index]))
+}
+
+fn no_build(path: &Path) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!(
+            "{} has no build with sizes (Unity lists them only after a clean build)",
+            path.display()
+        ),
+    )
+}
+
+/// Where builds are saved: the app's history folder.
+fn history_dir() -> std::path::PathBuf {
+    let settings = crate::settings::Settings::load();
+    crate::build_history::builds_dir(
+        &settings
+            .sessions_dir
+            .unwrap_or_else(crate::save::default_dir),
+    )
+}
+
+/// Saves the log's latest build with sizes to the build history.
+pub fn save_build(path: &Path, note: &str, to: Option<std::path::PathBuf>) -> std::io::Result<()> {
+    let loaded = load(path, &file_name(path))?;
+    let (index, build) = latest_sized_build(&loaded).ok_or_else(|| no_build(path))?;
+    let user = crate::save::current_user_name();
+    let names: Vec<&str> = user.iter().map(String::as_str).collect();
+    let dir = to.unwrap_or_else(history_dir);
+    let saved = crate::build_history::save_build(
+        &loaded,
+        index,
+        &dir,
+        note,
+        &names,
+        &chrono::Local::now(),
+    )?;
+    println!("saved {} to {}", build.label(), saved.display());
+    Ok(())
+}
+
+/// Prints what changed from build A to build B as Markdown. Without A, B is
+/// compared with the newest saved build of the same project.
+pub fn compare_builds(a: Option<&Path>, b: &Path, redact: bool) -> std::io::Result<()> {
+    let lb = load(b, &file_name(b))?;
+    let (_, build_b) = latest_sized_build(&lb).ok_or_else(|| no_build(b))?;
+    let saved_a;
+    let la;
+    let (label_a, build_a, raw_a): (String, &comte_core::BuildReport, &[String]) = match a {
+        Some(a) => {
+            la = load(a, &file_name(a))?;
+            let (_, build) = latest_sized_build(&la).ok_or_else(|| no_build(a))?;
+            (
+                format!("{} ({})", build.label(), file_name(a)),
+                build,
+                &la.raw,
+            )
+        }
+        None => {
+            let project = crate::build_history::project_name(&lb.doc);
+            let identity = build_b.identity();
+            let history = crate::build_history::discover(&history_dir());
+            // Newest first: only builds saved before B, when B is saved.
+            let older = history
+                .iter()
+                .position(|s| s.build.identity() == identity)
+                .map_or(0, |i| i + 1);
+            saved_a = history
+                .into_iter()
+                .skip(older)
+                .find(|s| {
+                    s.build.has_sizes()
+                        && s.build.identity() != identity
+                        && (project.is_none() || s.project == project)
+                })
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "no saved build of this project to compare with (save one with --save-build)",
+                    )
+                })?;
+            (saved_a.label(), &saved_a.build, &[])
+        }
+    };
+    let user = crate::save::current_user_name();
+    let names: Vec<&str> = user.iter().map(String::as_str).collect();
+    let text = crate::report_export::build_comparison_markdown(
+        (&label_a, build_a, raw_a),
+        (
+            &format!("{} ({})", build_b.label(), file_name(b)),
+            build_b,
+            &lb.raw,
+        ),
+        &names,
+        redact,
+    );
+    print!("{text}");
     Ok(())
 }
 

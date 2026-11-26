@@ -208,7 +208,7 @@ Stack frame syntax differs between versions, so the parser accepts both forms:
 | `[Project] Loading completed in X seconds` | closes **Startup** with its duration |
 | `Cleanup mono` / `Input System … ShutdownInProgress` | closes everything and opens **Shutdown** |
 | `[WorkerN] Start importing <path> using Guid(…) …` … `[WorkerN]  -> (artifact id: '…') in X seconds`, or both on one line | an **import** with its duration (`ParseEvent::Import`). Imports are matched per worker; the lines still fold into Asset pipeline entries. |
-| `Build Report` … size by category … `Complete build size` … `Used Assets …, sorted by uncompressed size:` … `-----` | one **Build** entry ("Build report: 164.2 MB complete build, largest asset …") and a `ParseEvent::BuildReport` with the totals, categories and up to 200 assets |
+| `BuildPlayer: start building target N` … `Build Report` … size by category … `Complete build size` … `Used Assets …, sorted by uncompressed size:` … `-----` … `##utp:{"type":"PlayerBuildInfo",…}` … `Build completed with a result of 'R' in S seconds (MS ms) [from -> to, …]` | one **Build** entry ("Build report: 1.20 GB complete build, largest asset …") and a `ParseEvent::BuildReport` per build: target, result, duration, start and end times, steps, totals, categories and every asset. See §5.1 |
 | First lines: `Built from…`, `OS:`, `Physical Memory`, `Date:`, `Successfully changed project path to:`, the `Direct3D:` block | **Facts** for the info card |
 
 **Fold groups:** consecutive lines that share a prefix (`[Licensing::*]`, `[Package Manager]`, Bee output, Mono reload chatter, `[Tag] …`) merge into one entry, and indented lines become details of the entry above them. This turns 4,195 real lines into about 255 entries.
@@ -323,9 +323,9 @@ Built as `comte-core::insights::Insights::of(&doc)`, computed once per load or l
   - **✎ marks steps that run the project's code:** `ProcessInitializeOnLoadAttributes`, `…MethodAttributes`, `DisableScriptedObjects` and `AwakeInstancesAfterBackupRestoration`. Those are the ones you can make faster.
   - Reports list the top 4.
 - **Slowest imports:** the top 10 asset imports as bars, with the number of imports and their total time. Hover for the full path, click to go to the import.
-- **Build size:** from the latest build report, the complete build size, your assets' size, categories and the 8 largest assets as bars.
+- **Build size:** the latest build's label ("Android build · 11/24/2026 11:24:23 PM · Succeeded · 9 min 14 s"), "the latest of N builds", then the complete build size, your assets' size, categories and the 8 largest assets as bars. When the latest build has no sizes (incremental), it says so and shows the last clean build's sizes. **🏗 Open build details** opens the build view (§5.1).
 - **Huge-log notice** (when only the end of the file was read): the file size, how much is shown, and `Insights::loudest`, the most repeated message of any kind, engine chatter included, which is usually what filled the file.
-- Reports get **Slowest imports** (top 5) and **Build size** (top categories and assets) sections.
+- Reports get **Slowest imports** (top 5) and **Build size** (top categories and assets) sections. Build size names the build and how many the log holds, and for an incremental latest build, the clean build whose sizes it shows.
 - **Environment** facts, and the **Timeline** as clickable section links.
 - Every item jumps to its entry: sections around it open, and if the current filters hide it, the filters are reset so it can be shown.
 - On the real Editor log this surfaced a 23-second asset refresh (11 refreshes, 29 s in total).
@@ -337,6 +337,36 @@ Original plan:
 - **Slowest items**: domain reloads, asset refreshes, compiles and scene unloads, with a small bar per item.
 - Device/Editor info card: Unity version, OS, RAM, GPU, driver.
 - Clicking any item jumps to its entry or section in the list.
+
+### 5.1 Builds
+
+Stage 1 of build analysis: everything comes from the Editor log's text. The binary `.buildreport` is not read. For later: Unity can write it as YAML (Preferences > Diagnostics > BuildReportingEditor > SerializeBuildReportAsText), UnityDataTools can turn it into SQLite, and Unity 6.6 writes `ContentLayout.json`.
+
+- **One build** runs from `BuildPlayer: start building target N` to `Build completed with a result of …`, or to the next start marker, or to the end of the log (then it is "not finished").
+  - **Target:** BuildTarget numbers 2 macOS, 5 Windows (32-bit), 9 iOS, 13 Android, 19 Windows, 20 WebGL, 24 Linux; others show as "target N".
+  - **Result:** `Build completed with a result of 'Succeeded'` (interactive builds), else `Build Finished, Result: Success.` (batch builds).
+  - **Duration and times:** from `Build completed …` (`554039 ms`, `[11/24/2026 11:24:23 PM -> 11/24/2026 11:33:37 PM, …]`). Batch logs don't print that line, so the duration comes from `PlayerBuildInfo`'s total.
+  - **Steps:** the `##utp:{"type":"PlayerBuildInfo",…,"steps":[{"description","duration"}]}` line.
+- **Sizes:** the `Build Report` block. Categories (`Textures 575.0 mb 97.4%`), `Total User Assets`, `Complete build size`, then every asset (` 20.0 mb  1.6% Assets/…`), with no cap. Unity's category percentages are of your assets; asset percentages are of the complete build. The app computes them the same way.
+  - **Incremental builds:** the block says "Information on used Assets is not available, since player data was not rebuilt." The build gets `sizes_unavailable`; the overview, the report and the build view say so and point to the last clean build.
+- **Model:** `comte_core::BuildReport` (`label()`, `has_sizes()`), `BuildStep`, `SizeRow`. The parser keeps the build open in `building` and emits it once at its end, so live tail and a full parse give the same builds.
+- **Build view** (`comte-app/src/build_view.rs`): replaces the list like Compare. A picker over all builds ("Build 2 of 3"), totals, Unity's categories, steps, then the asset list: search (every word, any case), order (largest, smallest, path), or group by file type (extension → Textures, Audio, Models, …) or by top folder (`Assets/X`, `Packages/Y`), with totals per group. Clicking a group lists its assets. The list is virtualized, so thousands of assets scroll smoothly. Dev hook: `COMTE_BUILD=1|type|folder`.
+- **Redaction:** asset paths go through the same redactor as everything else, in reports and saved sessions. Tests cover a user folder in an asset path.
+- **Tested with** `fixtures/editor_build.log`: real Unity 6000.3.11f1 lines from a batch Android build (incremental) and an interactive Android build (clean; 1,575 assets trimmed to 50, names neutralized). The real logs it came from parse too: 1,575 assets, 1.20 GB.
+
+### 5.2 Build history and comparison
+
+Stage 2: "your build grew by X, and here are the assets responsible".
+
+- **Saving** reuses saved sessions (§6.1): `save::ContentChoice::Build(i)` keeps the lines `BuildReport::line_range()` (from the start marker to `end_line`, the build's last line) plus the lines naming the Unity version and the project path, redacted like any session, with tags `build, <target>` and content `filtered (build: <label>)`. The file goes to `builds/` beside `sessions/` (`build_history::builds_dir`; dev hook `COMTE_BUILDS_DIR`). Reopened, the Unity parser reads it back into the same `BuildReport`; a test checks that the identity, assets, categories and steps match.
+- **History:** `build_history::discover` reads every saved build, newest first by `saved_at`, with the project's folder name. `BuildReport::identity()` (target, start time, result, duration, sizes, asset count) recognizes a build saved before: the view then shows "✓ In the build history" instead of the save button.
+- **Comparison** (`comte_core::BuildComparison::of(a, b)`, engine independent): totals, duration and asset counts before and after; every category's change; assets matched by path into grew, shrank, added and removed, each largest change first; the unchanged count.
+  - **Growth** is measured on "Total User Assets" when both builds have it (printed to 0.1 MB), else the complete build size (0.1 GB), else the sum over the listed assets.
+  - **Responsible:** grown and added assets when the build grew, shrunk and removed ones when it shrank, largest first. The view and the Markdown say how much of the change the top ones explain; changes going the other way are listed separately, so the sum can exceed the growth.
+  - **Default comparison:** the build of the same project saved just before the shown one (the newest saved one if the shown build isn't saved yet), else the previous build with sizes in the log.
+  - `to_markdown` gives a pasteable summary; the app and the CLI redact it with names learned from both logs (`report_export::build_comparison_markdown`).
+- **CLI:** `--save-build <log> [--note] [--to]`, `--compare-builds <A> <B>` and `--compare-builds <log> --last-saved`, for a CI step after each build.
+- **Tested with** the stage 1 fixture and a second clean build made from it (one texture 20 → 48 MB, one 16 → 8 MB, one new, one data file removed, Textures and Total User Assets updated to match): "Your build grew by 33.0 MB", responsible `item_0001.png` +28.0 MB and `item_0051.png` +13.0 MB. There is no second real clean build of the same project yet.
 
 ---
 
@@ -637,6 +667,7 @@ Each milestone ends with a suggested conventional commit. You commit it yourself
 - **Native crash formats** are tested with reconstructed fixtures; no real crash log was available.
 - **macOS and Linux** log locations are wired up but untested.
 - **Live tail** copies the document on every update; very large files may need a cheaper snapshot.
+- **Build reports:** checked only against Unity 6000.3.11f1 Android builds. Older wording (`Complete size`, `Used Assets, sorted by uncompressed size`) is accepted but unverified; failed and cancelled builds have not been seen in a real log; asset types in the build view come from file extensions, not from Unity. Build comparison matches assets by path, so a renamed or moved asset counts as removed and added; it has been checked against one real clean build and an edited copy of it, not two real builds.
 - **Unlabeled names in logs** (e.g. `User info retrieved: <name>`) can only be redacted through "Always also redact".
 
 ## 14. Open questions (for later)

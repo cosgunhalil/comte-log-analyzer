@@ -4,9 +4,11 @@
 //! - `comte-log-analyzer` (`src/main.rs`): the desktop app. On Windows it is a GUI
 //!   program, so no console window opens next to it.
 //! - `comte` (`src/bin/comte.rs`): the command line (`--list`, `--summary`,
-//!   `--compare`, `--report`).
+//!   `--compare`, `--report`, `--save-build`, `--compare-builds`).
 
 mod app;
+mod build_history;
+mod build_view;
 mod cli;
 mod compare_view;
 mod devtools;
@@ -40,6 +42,16 @@ const USAGE: &str = "Usage:
   comte --compare <A> <B>           print what changed from log A to log B
   comte --report <log file> [--slack] [--no-redact]
                                     print a Markdown (or Slack) report
+  comte --save-build <log file> [--note <text>] [--to <folder>]
+                                    save the log's latest build with sizes to
+                                    the build history (redacted)
+  comte --compare-builds <A> <B> [--no-redact]
+                                    print what changed from build A to build B
+                                    (Editor logs or saved builds; the latest
+                                    build with sizes of each) as Markdown
+  comte --compare-builds <log file> --last-saved
+                                    the same, against the newest saved build of
+                                    the same project
 
 The desktop app is comte-log-analyzer [log file].";
 
@@ -99,6 +111,34 @@ pub fn run_cli(args: &[std::ffi::OsString]) -> ExitCode {
             }
             None => usage_error(),
         },
+        Some("--save-build") => match path(1) {
+            Some(file) => {
+                let value = |name: &str| {
+                    args.iter()
+                        .position(|a| a == name)
+                        .and_then(|i| args.get(i + 1))
+                        .map(|v| v.to_string_lossy().into_owned())
+                };
+                report_error(cli::save_build(
+                    file,
+                    &value("--note").unwrap_or_default(),
+                    value("--to").map(PathBuf::from),
+                ))
+            }
+            None => usage_error(),
+        },
+        Some("--compare-builds") => {
+            let flag = |name: &str| args.iter().skip(2).any(|a| a == name);
+            match (path(1), path(2)) {
+                (Some(b), _) if flag("--last-saved") => {
+                    report_error(cli::compare_builds(None, b, !flag("--no-redact")))
+                }
+                (Some(a), Some(b)) if !a.as_os_str().to_string_lossy().starts_with("--") => {
+                    report_error(cli::compare_builds(Some(a), b, !flag("--no-redact")))
+                }
+                _ => usage_error(),
+            }
+        }
         Some("--version" | "-V") => {
             println!("comte {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS

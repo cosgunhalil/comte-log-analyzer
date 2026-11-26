@@ -188,9 +188,7 @@ pub fn render_report(input: &ReportInput<'_>, style: ReportStyle) -> String {
 
     reload_phases_section(&mut out, input.insights);
     imports_section(&mut out, input.insights);
-    if let Some(build) = doc.build_reports().last() {
-        build_section(&mut out, build);
-    }
+    builds_section(&mut out, doc.build_reports());
 
     // Environment
     let mut seen = Vec::new();
@@ -297,8 +295,35 @@ fn imports_section(out: &mut Out, insights: &Insights) {
 }
 
 /// The latest build's size: total, biggest categories and assets.
-fn build_section(out: &mut Out, build: &BuildReport) {
+/// "Build size": which build, and its sizes. The latest build is described;
+/// when it has no sizes (an incremental build), the sizes come from the last
+/// clean build, named as such.
+fn builds_section(out: &mut Out, builds: &[BuildReport]) {
+    let Some(latest) = builds.last() else {
+        return;
+    };
     out.h2("Build size");
+    let which = if builds.len() > 1 {
+        format!(" (the latest of {} builds in this log)", builds.len())
+    } else {
+        String::new()
+    };
+    out.para(&format!("{}{which}", out.bold(&latest.label())));
+    if latest.has_sizes() {
+        build_sizes(out, latest);
+    } else {
+        out.para("No sizes for this build: Unity lists them only after a clean build.");
+        if let Some(clean) = builds.iter().rev().find(|b| b.has_sizes()) {
+            out.para(&format!(
+                "Sizes from the last clean build, {}:",
+                clean.label()
+            ));
+            build_sizes(out, clean);
+        }
+    }
+}
+
+fn build_sizes(out: &mut Out, build: &BuildReport) {
     let mut meta = Vec::new();
     if let Some(total) = build.total {
         meta.push(format!("{} complete build", format_bytes(total)));

@@ -32,6 +32,7 @@ from the tagged source; check a download with the [GitHub CLI](https://cli.githu
 |---|---|
 | **Player.log** | 25 games built with Unity 2019.4, 2020.3, 2021.3, 2022.3 and Unity 6 (6000.0–6000.3) |
 | **Editor.log** | Unity 6000.3 (older versions not yet checked against real logs) |
+| **Build reports** in Editor.log | Unity 6000.3: Android builds from the Editor and from batch mode, clean and incremental. Other targets and older versions are not yet checked against real logs |
 | **Platform** | Windows only for now; macOS and Linux are not built or tested yet |
 
 ## Features
@@ -43,7 +44,9 @@ from the tagged source; check a download with the [GitHub CLI](https://cli.githu
 | **A verdict first** | "Crashed in Scene #3", "103 errors (4 different)", or "⏳ Stopped while importing Assets/Hero.fbx" when Unity got stuck |
 | **Explains known problems** | Native crashes traced to a GPU driver, your IL2CPP code, the engine or a plugin; out of memory, a removed graphics device, a full disk, Package Manager, Gradle and licensing failures |
 | **Search and navigation** | Words, `"phrases"` and `-exclusions`, highlighting, a timeline strip, pins with notes, and keyboard shortcuts for everything |
-| **Performance** | Slowest operations and asset imports, build size by asset, and a warning when domain reloads get slower than your last sessions |
+| **Performance** | Slowest operations and asset imports, and a warning when domain reloads get slower than your last sessions |
+| **Build size** | Every player build in the Editor log: what it was, how long it took, its size by type, and every asset, searchable and grouped by file type or folder |
+| **Build history** | Save builds and compare any two: "Your build grew by 33.0 MB" and the assets responsible, what shrank, what is new and what is gone. Also from the command line, for CI |
 | **Huge and live logs** | Logs of many gigabytes open from their end; ● Live follows Unity as it writes |
 | **Save, share, compare** | Sessions with notes and tags, a support pack zip and Markdown/Slack reports, all redacted by default; ⇄ Compare with the previous run |
 | **Takes you to the code** | Click `TurnView.cs:98` (or Ctrl+E) to open it in Rider, VS Code or Visual Studio |

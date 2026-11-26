@@ -12,6 +12,7 @@
 //! - [`markup`]: Unity rich text (`<color=…>`, `<b>`, `<i>`) to styled spans or plain text.
 //! - [`insights`]: verdict, most repeated problems, slowest operations.
 //! - [`compare`]: what changed between two logs (new/gone problems, timings).
+//! - [`build_compare`]: what changed between two builds (grew, shrank, new, gone).
 //! - [`session`]: the saved-session file format (header with note and tags).
 //! - [`report`]: a pasteable Markdown or Slack report of a log.
 //! - [`redact`]: masks user names, tokens, ids, … before saving or sharing.
@@ -20,6 +21,7 @@
 //! Line numbers are **1-based** everywhere; line ranges are half-open (`start..end`).
 
 pub mod activity;
+pub mod build_compare;
 pub mod compare;
 pub mod document;
 pub mod engine;
@@ -36,9 +38,10 @@ pub mod source;
 pub mod tail;
 
 pub use activity::{
-    AssetImport, BuildReport, Hint, ReloadPhase, ReloadProfile, SizeRow, Unfinished, format_bytes,
-    parse_size,
+    AssetImport, BuildReport, BuildStep, Hint, ReloadPhase, ReloadProfile, SizeRow, Unfinished,
+    format_bytes, parse_size,
 };
+pub use build_compare::{BuildComparison, SizeChange, format_delta};
 pub use compare::{Comparison, FactDiff, ProblemDiff, TimingDiff};
 pub use document::LogDocument;
 pub use engine::{Companion, DETECT_LINES, EngineSupport, LogLocator, detect_engine};

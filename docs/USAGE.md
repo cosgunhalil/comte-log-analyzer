@@ -80,8 +80,58 @@ line. For how each feature works inside, see [DESIGN.md](DESIGN.md).
   reloads: 1.82 s now, 43% slower than your last 4 sessions". It also shows
   where reload time goes, and marks the steps that run your own code
   (`[InitializeOnLoad]`, `OnEnable`).
-- **Finds what is slow or big.** The slowest asset imports, and after a
-  build, its size by category and its largest assets.
+- **Finds what is slow.** The slowest asset imports, as bars.
+
+### Builds
+
+After a player build, the Editor log holds a build report, and the overview
+gets a **Build size** section: which build it is (target, start time,
+result, duration), how many builds the log holds, Unity's size per category
+and the largest assets.
+
+- **🏗 Open build details** (or clicking an asset) replaces the list with the
+  build view. Esc or ✕ Close goes back; **Show in log** goes to the report.
+- **Which build:** the picker at the top lists every build in the log, "Build
+  2 of 3". The overview always starts with the latest.
+- **Totals:** complete build size, your assets, number of assets, result,
+  duration and start and end times.
+- **By type:** Unity's own categories (Textures, Meshes, Sounds, …) with their
+  share of your assets, largest first. **Build steps** lists how long each
+  step took.
+- **Assets:** every asset Unity listed. Search by path (every word, any case),
+  order by size or path, or group them **by file type** (from the extension)
+  or **by folder** (`Assets/Art`, `Packages/com.unity.ugui`). A group shows its
+  total and number of assets; click it to list only its assets.
+- **No sizes?** Unity writes the asset list only when it rebuilds player data.
+  After an incremental build the report says "Information on used Assets is
+  not available", and Comte says so and offers the last clean build in the
+  log, if there is one. Make a clean build to see sizes.
+- Reports and `comte --summary` include the builds too, redacted like the rest.
+
+### Build history
+
+- **💾 Save to history** (with an optional note such as "release 1.4") keeps
+  the build in `Documents\ComteLogAnalyzer\builds`, next to `sessions`. Like
+  a saved session, it is a redacted `.log` file, but it holds only that
+  build's lines, so it is small and opens like any log.
+- **Compare with** picks the build to compare against: another build in the
+  same log or a saved one. When the build view opens, it already compares
+  with the build of the same project that was saved before it (or the
+  previous build in the log).
+- The comparison starts with the answer: **"Your build grew by 33.0 MB"**,
+  then the sizes before and after, and the lists:
+  **Responsible** (the changes that go the way the build went, largest
+  first, with how much of the change they explain), **Grew**, **Shrank**,
+  **New** and **Gone**. The search box filters them too. **By type** shows
+  which of Unity's categories changed.
+- The growth is measured on your assets ("Total User Assets"): Unity prints
+  that to 0.1 MB, but the complete build size only to 0.1 GB.
+- **📋 Copy as Markdown** copies the comparison, redacted, for a pull request
+  or a chat.
+- **Build history of <project>** lists the saved builds of the project, newest
+  first, with the size of your assets and the change from the build saved
+  before. Compare or open any of them.
+- Assets are matched by path: a renamed or moved asset shows as gone and new.
 
 ### Saving and sharing
 
@@ -145,7 +195,10 @@ prints and exits):
 | Command | What it prints |
 |---|---|
 | `comte --list` | The logs found on this machine |
-| `comte --summary path/to/Player.log` | A parse summary: kind, facts, sections, problems |
+| `comte --summary path/to/Player.log` | A parse summary: kind, facts, builds, sections, problems |
+| `comte --save-build Editor.log [--note "release 1.4"] [--to folder]` | Save the log's latest build with sizes to the build history (redacted) |
+| `comte --compare-builds A.log B.log [--no-redact]` | What changed from build A to build B, as Markdown (Editor logs or saved builds; the latest build with sizes of each) |
+| `comte --compare-builds Editor.log --last-saved` | The same, against the build of the project saved before it: for a CI step after each build |
 | `comte --compare Editor-prev.log Editor.log` | What changed from the first log to the second |
 | `comte --report path/to/Player.log --slack` | A Markdown (or Slack) report, redacted unless you add `--no-redact` |
 

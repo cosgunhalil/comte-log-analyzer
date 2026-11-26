@@ -13,6 +13,10 @@
 //! - `COMTE_SAVE_TO=file.log`: save the session there right away (no file dialog).
 //! - `COMTE_LIVE=1`: turn live tail on once the log is loaded.
 //! - `COMTE_COMPARE=1`: open the comparison with the previous run after loading.
+//! - `COMTE_BUILD=1`: open the build view on the latest build after loading;
+//!   `COMTE_BUILD=type` or `=folder` shows it grouped.
+//! - `COMTE_BUILDS_DIR=folder`: keep the build history there instead of
+//!   beside the sessions folder.
 //! - `COMTE_SETTINGS_OPEN=1`: open the settings window.
 //! - `COMTE_NO_DISCOVERY=1`: don't list this machine's logs (clean screenshots).
 //! - `COMTE_COPY=summary|lines|message`: copy that to the clipboard after loading
@@ -51,6 +55,7 @@ pub struct DevHooks {
     pub save_to: Option<PathBuf>,
     pub live: bool,
     pub compare: bool,
+    pub build: Option<String>,
     pub settings_open: bool,
     pub no_discovery: bool,
     pub copy: Option<String>,
@@ -83,6 +88,7 @@ impl DevHooks {
             save_to: var("COMTE_SAVE_TO").map(PathBuf::from),
             live: var("COMTE_LIVE").as_deref() == Some("1"),
             compare: var("COMTE_COMPARE").as_deref() == Some("1"),
+            build: var("COMTE_BUILD"),
             settings_open: var("COMTE_SETTINGS_OPEN").as_deref() == Some("1"),
             no_discovery: var("COMTE_NO_DISCOVERY").as_deref() == Some("1"),
             copy: var("COMTE_COPY"),

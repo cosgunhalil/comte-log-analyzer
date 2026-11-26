@@ -1,0 +1,187 @@
+[Licensing::Module] Trying to connect to existing licensing client channel...
+Built from '6000.3/staging' branch; Version is '6000.3.11f1 (3000ef702840) revision 3145967'; Using compiler version '194234433'; Build Type 'Release'
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-dev" at "2026-11-05T17:59:24.8410007Z"
+OS: 'Windows 11  (10.0.26200) CoreSingleLanguage' Language: 'en' Physical Memory: 32600 MB
+BatchMode: 0, IsHumanControllingUs: 1, StartBugReporterOnCrash: 1, Is64bit: 1
+System  architecture: x64
+Process architecture: x64
+Date: 2026-11-05T17:59:24Z
+[Licensing::Client] Handshaking with LicensingClient:
+  Version:                 1.18.3+d7ffd15
+  Session Id:              00000000000000000000000000000000
+  Machine Id:              REDACTED=
+[Licensing::Module] License group:
+  Id: XX-XXXX-XXXX-XXXX-XXXX-XXXX
+  Product: Unity Personal
+  Type: ULF
+  Expiration: Unlimited
+[Licensing::Module] Licensing Background thread has ended after 0.05s
+
+COMMAND LINE ARGUMENTS:
+C:\Program Files\Unity\Hub\Editor\6000.3.11f1\Editor\Unity.exe
+-projectpath
+C:\Users\dev\Projects\Sample Game
+-useHub
+-accessToken
+<token>
+Successfully changed project path to: C:\Users\dev\Projects\Sample Game
+C:/Users/dev/Projects/Sample Game
+[UnityMemory] Configuration Parameters - Can be set up in boot.config
+    "memorysetup-temp-allocator-size-gfx=262144"
+    "memorysetup-bucket-allocator-granularity=16"
+Input System module state changed to: Initialized.
+[Physics::Module] Initialized fallback backend.
+[Package Manager] Connected to IPC stream "Upm-19228" after 0.4 seconds.
+Initialize engine version: 6000.3.11f1 (3000ef702840)
+[D3D12 Device Filter] Vendor Name: NVIDIA
+[D3D12 Device Filter] Device Name: NVIDIA GeForce RTX 2070 Super
+GfxDevice: creating device client; kGfxThreadingModeSplitJobs
+Direct3D:
+    Version:         Direct3D 12 [level 12.2]
+    Renderer:        NVIDIA GeForce RTX 2070 Super (ID=0x1e91)
+    Vendor:          NVIDIA
+    VRAM:            7989 MB
+    App VRAM Budget: 7221 MB
+    Driver:          32.0.16.1692
+Initialize mono
+Mono path[0] = 'C:/Program Files/Unity/Hub/Editor/6000.3.11f1/Editor/Data/Managed'
+Mono config path = 'C:/Program Files/Unity/Hub/Editor/6000.3.11f1/Editor/Data/MonoBleedingEdge/etc'
+Begin MonoManager ReloadAssembly
+Registering precompiled unity dll's ...
+Registered in 0.008224 seconds.
+- Loaded All Assemblies, in  0.629 seconds
+Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  0.680 seconds
+Domain Reload Profiling: 1304ms
+	BeginReloadAssembly (193ms)
+		ExecutionOrderSort (0ms)
+	LoadAllAssembliesAndSetupDomain (260ms)
+	FinalizeReload (681ms)
+Application.AssetDatabase Initial Refresh Start
+[Package Manager] Restoring resolved packages state from cache
+[Package Manager] Registered 3 packages:
+  Packages from [https://packages.unity.com]:
+    com.unity.ide.rider@3.0.39 (location: C:\Users\dev\Projects\Sample Game\Library\PackageCache\com.unity.ide.rider@4504839d03f7)
+  Built-in packages:
+    com.unity.ugui@2.0.0 (location: C:\Users\dev\Projects\Sample Game\Library\PackageCache\com.unity.ugui@f17df9b1ab21)
+[Package Manager] Done registering packages in 0.02 seconds
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.11f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aEDbg.dag"
+WorkingDir: C:/Users/dev/Projects/Sample Game
+ExitCode: 4 Duration: 0s233ms
+*** Tundra requires additional run (0.19 seconds), 0 items updated, 405 evaluated
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.11f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aEDbg.dag"
+WorkingDir: C:/Users/dev/Projects/Sample Game
+ExitCode: 0 Duration: 0s151ms
+Assets/Scripts/Legacy/OldLoader.cs(14,9): warning CS0618: 'WWW' is obsolete: 'Use UnityWebRequest, a fully featured replacement which is more efficient and has additional features'
+*** Tundra build success (0.12 seconds), 0 items updated, 405 evaluated
+AssetDatabase: script compilation time: 1.296285s
+Begin MonoManager ReloadAssembly
+- Loaded All Assemblies, in  0.734 seconds
+Mono: successfully reloaded assembly
+Domain Reload Profiling: 1825ms
+	BeginReloadAssembly (337ms)
+	FinalizeReload (1097ms)
+Asset Pipeline Refresh (id=061c453a100b521459d8cb43e1812596): Total: 3.530 seconds - Initiated by InitialRefreshV2(ForceSynchronousImport)
+	Summary:
+		Imports: total=0 (actual=0, local cache=0, cache server=0)
+		Asset DB Process Time: managed=0 ms, native=1392 ms
+Unloading 16 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 1579 unused Assets / (2.9 MB). Loaded Objects now: 2181.
+Memory consumption went from 141.1 MB to 138.1 MB.
+Total: 7.788200 ms (FindLiveObjects: 0.209100 ms CreateObjectMapping: 0.119400 ms MarkObjects: 5.467700 ms  DeleteObjects: 1.991200 ms)
+
+<RI> Initializing input.
+<RI> Input initialized.
+[Project] Loading completed in 9.877 seconds
+	Project init time: 				6.769 seconds
+	Scene opening time: 			2.840 seconds
+UnityConnectWebRequestException: Token Exchange failed due a failure with the web request.
+  at UnityEditor.Connect.TokenExchange.VerifyTokenExchangeResponse (UnityEngine.Networking.UnityWebRequest exchangeRequest) [0x00019] in <2e4eaf245b924ed1b8c17467295ae042>:0
+  at UnityEngine.UnitySynchronizationContext.ExecuteTasks () [0x00014] in <1b6535aa091d41cf8b3ca222ed9ceef0>:0
+
+Asset Pipeline Refresh (id=35bd790774014b14f9af60ee35eaea95): Total: 0.006 seconds - Initiated by RefreshV2(AllowForceSynchronousImport)
+Opening scene 'Assets/Scenes/Boot.unity'
+Unloading 135 Unused Serialized files (Serialized files now loaded: 0)
+Loaded scene 'Assets/Scenes/Boot.unity'
+	Deserialize:            117.855 ms
+	Integration:            82.151 ms
+	Total Operation Time:   205.298 ms
+BuildPlayer: start building target 13
+-------------------------------------------------------------------------------
+Build Report
+Information on used Assets is not available, since player data was not rebuilt.
+Do a clean build to view the Asset build report information.
+-------------------------------------------------------------------------------
+DisplayProgressNotification: Build Successful
+Build Finished, Result: Success.
+##utp:{"type":"PlayerBuildInfo","version":2,"phase":"Immediate","time":1795297913960,"processId":15108,"steps":[{"description":"Preprocess Player","duration":14},{"description":"Prepare For Build","duration":5163},{"description":"ProducePlayerScriptAssemblies","duration":5805},{"description":"Verify Build setup","duration":164},{"description":"Prepare assets for target platform","duration":6},{"description":"Prepare splash screen","duration":2},{"description":"Run script only build","duration":87},{"description":"Postprocess built player","duration":172607}],"duration":183848}
+BuildPlayer: start building target 13
+-------------------------------------------------------------------------------
+Build Report
+Uncompressed usage by category (Percentages based on user generated assets only):
+Textures               575.0 mb	 97.4% 
+Meshes                 0.0 kb	 0.0% 
+Animations             1.8 mb	 0.3% 
+Sounds                 6.6 mb	 1.1% 
+Shaders                139.4 kb	 0.0% 
+Other Assets           6.3 mb	 1.1% 
+Levels                 2.1 kb	 0.0% 
+File headers           253.9 kb	 0.0% 
+Total User Assets      590.2 mb	 100.0% 
+Complete build size    1.2 gb
+Used Assets and files from the Resources folder, sorted by uncompressed size:
+ 20.0 mb	 1.6% Assets/Game/Textures/item_0001.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0002.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0003.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0004.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0005.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0006.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0007.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0008.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0009.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0010.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0011.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0012.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0013.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0014.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0015.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0016.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0017.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0018.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0019.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0020.png
+ 16.0 mb	 1.3% Assets/Game/Textures/item_0021.png
+ 9.4 mb	 0.7% Assets/Game/Textures/item_0022.png
+ 8.0 mb	 0.6% Assets/Game/Textures/item_0023.png
+ 8.0 mb	 0.6% Assets/Game/Textures/item_0024.png
+ 8.0 mb	 0.6% Assets/Game/Textures/item_0025.png
+ 8.0 mb	 0.6% Assets/Game/Textures/item_0026.png
+ 8.0 mb	 0.6% Assets/Game/Textures/item_0027.png
+ 7.0 mb	 0.6% Assets/Game/Textures/item_0028.png
+ 4.4 mb	 0.4% Assets/Game/Resources/Fonts/item_0029.otf
+ 4.0 mb	 0.3% Assets/Game/Textures/item_0030.png
+ 4.0 mb	 0.3% Assets/Game/Textures/item_0031.png
+ 4.0 mb	 0.3% Assets/Game/Textures/item_0032.png
+ 4.0 mb	 0.3% Assets/Game/Textures/item_0033.png
+ 4.0 mb	 0.3% Assets/Game/Textures/item_0034.png
+ 4.0 mb	 0.3% Assets/Game/Textures/item_0035.png
+ 4.0 mb	 0.3% Assets/Game/Textures/item_0036.png
+ 4.0 mb	 0.3% Assets/Game/Textures/item_0037.png
+ 4.0 mb	 0.3% Assets/Game/Textures/item_0038.png
+ 4.0 mb	 0.3% Assets/Game/Textures/item_0039.png
+ 4.0 mb	 0.3% Assets/Game/Textures/item_0040.png
+ 0.2 kb	 0.0% Packages/com.example.package2/Runtime/Scripts/item_0041.cs
+ 0.2 kb	 0.0% Packages/com.example.package3/Runtime/Scripts/item_0042.cs
+ 0.2 kb	 0.0% Packages/com.example.package4/Runtime/Scripts/item_0043.cs
+ 0.2 kb	 0.0% Packages/com.example.package1/Runtime/Scripts/item_0044.cs
+ 0.2 kb	 0.0% Packages/com.example.package2/Runtime/Scripts/item_0045.cs
+ 0.1 kb	 0.0% Assets/Game/Resources/Data/item_0046.asset
+ 0.1 kb	 0.0% Assets/Game/Resources/Data/item_0047.asset
+ 0.1 kb	 0.0% Assets/Game/Resources/Data/item_0048.asset
+ 0.1 kb	 0.0% Assets/Game/Resources/Data/item_0049.asset
+ 0.1 kb	 0.0% Assets/Game/Resources/Data/item_0050.json
+-------------------------------------------------------------------------------
+DisplayProgressNotification: Build Successful
+Build Finished, Result: Success.
+##utp:{"type":"PlayerBuildInfo","version":2,"phase":"Immediate","time":1795552417701,"processId":33364,"steps":[{"description":"Preprocess Player","duration":51},{"description":"Prepare For Build","duration":68},{"description":"ProducePlayerScriptAssemblies","duration":10723},{"description":"Verify Build setup","duration":293},{"description":"Prepare assets for target platform","duration":22},{"description":"Prepare splash screen","duration":14},{"description":"Building scenes","duration":3764},{"description":"Build scripts DLLs","duration":85},{"description":"Build GlobalGameManagers file","duration":231},{"description":"Writing asset files","duration":6679},{"description":"Building Resources/unity_builtin_extra","duration":1024},{"description":"Write data build dirty tracking information","duration":670},{"description":"Postprocess built player","duration":528035}],"duration":551659}
+Build completed with a result of 'Succeeded' in 554 seconds (554039 ms) [11/24/2026 11:24:23 PM -> 11/24/2026 11:33:37 PM, 9m 14s]

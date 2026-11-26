@@ -28,6 +28,8 @@ pub enum Jump {
     OpenCompanion(usize),
     /// Show the open log's file in the file manager.
     RevealLog,
+    /// Open the build view on this build (`doc.build_reports()`).
+    OpenBuild(usize),
 }
 
 /// What the user did with a hint card.
@@ -189,9 +191,9 @@ pub fn overview(ui: &mut Ui, current: &Loaded, trends: &[Trend]) -> Option<Jump>
         jump = jump.or(slowest_imports(ui, current));
     }
 
-    if let Some(build) = current.doc.build_reports().last() {
+    if !current.doc.build_reports().is_empty() {
         heading(ui, "Build size");
-        jump = jump.or(build_size(ui, current, build));
+        jump = jump.or(builds(ui, current));
     }
 
     if !insights.timings.is_empty() {
@@ -663,7 +665,58 @@ fn slowest_imports(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
     jump
 }
 
-fn build_size(ui: &mut Ui, current: &Loaded, build: &BuildReport) -> Option<Jump> {
+/// Which build is shown (the latest, or the last clean one when the latest
+/// has no sizes) and its sizes, with a way into the build view.
+fn builds(ui: &mut Ui, current: &Loaded) -> Option<Jump> {
+    let builds = current.doc.build_reports();
+    let latest = builds.len() - 1;
+    let mut jump = None;
+    ui.label(RichText::new(builds[latest].label()).strong());
+    if builds.len() > 1 {
+        ui.label(
+            RichText::new(format!("The latest of {} builds in this log", builds.len()))
+                .weak()
+                .small(),
+        );
+    }
+    let mut shown = latest;
+    if !builds[latest].has_sizes() {
+        ui.label(
+            RichText::new(if builds[latest].sizes_unavailable {
+                "No sizes: Unity lists them only after a clean build."
+            } else {
+                "No size report for this build."
+            })
+            .color(ui.visuals().warn_fg_color)
+            .small(),
+        );
+        if let Some(clean) = builds.iter().rposition(BuildReport::has_sizes) {
+            shown = clean;
+            ui.label(
+                RichText::new(format!(
+                    "Sizes from the last clean build, {}:",
+                    builds[clean].label()
+                ))
+                .weak()
+                .small(),
+            );
+        }
+    }
+    if builds[shown].has_sizes() {
+        jump = build_size(ui, &builds[shown], shown);
+    }
+    ui.add_space(4.0);
+    if ui
+        .button("🏗 Open build details")
+        .on_hover_text("Every asset, grouped by type or folder, searchable")
+        .clicked()
+    {
+        jump = Some(Jump::OpenBuild(shown));
+    }
+    jump
+}
+
+fn build_size(ui: &mut Ui, build: &BuildReport, index: usize) -> Option<Jump> {
     let mut jump = None;
     let mut meta = Vec::new();
     if let Some(total) = build.total {
@@ -698,11 +751,9 @@ fn build_size(ui: &mut Ui, current: &Loaded, build: &BuildReport) -> Option<Jump
                 asset.bytes as f32 / largest as f32,
                 &format_bytes(asset.bytes),
             )
-            .on_hover_text(&asset.name);
-            if response.clicked()
-                && let Some(entry) = current.doc.entry_at_line(build.line)
-            {
-                jump = Some(Jump::Entry(entry.id));
+            .on_hover_text(format!("{}\nClick for every asset", asset.name));
+            if response.clicked() {
+                jump = Some(Jump::OpenBuild(index));
             }
         }
     }

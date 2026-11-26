@@ -162,6 +162,31 @@ pub fn mod_names(doc: &comte_core::LogDocument) -> Vec<&str> {
     mods
 }
 
+/// The Markdown comparison of two builds, redacted with the names learned
+/// from both logs (the earlier build's log may be a saved build).
+pub fn build_comparison_markdown(
+    before: (&str, &comte_core::BuildReport, &[String]),
+    after: (&str, &comte_core::BuildReport, &[String]),
+    user_names: &[&str],
+    redact: bool,
+) -> String {
+    let text =
+        comte_core::BuildComparison::of(before.1, after.1).to_markdown(before.0, after.0, 20);
+    if !redact {
+        return text;
+    }
+    let lines: Vec<&str> = before.2.iter().chain(after.2).map(String::as_str).collect();
+    let mut redactor = Redactor::for_lines(&lines, user_names);
+    let mut out: Vec<String> = text
+        .lines()
+        .map(|line| redactor.redact_line(line).into_owned())
+        .collect();
+    if text.ends_with('\n') {
+        out.push(String::new());
+    }
+    out.join("\n")
+}
+
 /// `2026-11-09_14-05_Editor.md`
 pub fn report_file_name(title: &str, now: &chrono::DateTime<chrono::Local>) -> String {
     crate::save::default_file_name(title, now).replace(".log", ".md")
@@ -179,6 +204,149 @@ mod tests {
             .join("../comte-unity/tests/fixtures")
             .join(name);
         load(&path, name).unwrap()
+    }
+
+    /// The build fixture, with one asset given an absolute path that names a
+    /// user (real build reports list project paths, but nothing stops an
+    /// asset path from carrying a user folder).
+    fn build_log_with_a_user_path() -> Loaded {
+        // Tests run in parallel: each call gets its own file.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../comte-unity/tests/fixtures/editor_build.log"),
+        )
+        .unwrap()
+        .replace(
+            "Assets/Game/Textures/item_0001.png",
+            "C:/Users/jdoe.smith/Art/item_0001.png",
+        );
+        let path = std::env::temp_dir().join(format!(
+            "comte-build-redact-{}-{}.log",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::write(&path, text).unwrap();
+        let loaded = load(&path, "Editor.log").unwrap();
+        let _ = std::fs::remove_file(&path);
+        loaded
+    }
+
+    #[test]
+    fn build_sizes_in_reports_are_redacted() {
+        let loaded = build_log_with_a_user_path();
+        let build = loaded.doc.build_reports().last().unwrap();
+        assert_eq!(
+            build.assets[0].name,
+            "C:/Users/jdoe.smith/Art/item_0001.png"
+        );
+
+        let report = build_report(&loaded, None, &ReportOptions::default(), "now", &[]);
+        assert!(report.text.contains("## Build size"), "{}", report.text);
+        assert!(
+            report
+                .text
+                .contains("**Android build · 11/24/2026 11:24:23 PM · Succeeded · 9 min 14 s** (the latest of 2 builds in this log)"),
+            "{}",
+            report.text
+        );
+        assert!(report.text.contains("C:/Users/<user>/Art/item_0001.png"));
+        assert!(!report.text.contains("jdoe"), "{}", report.text);
+
+        let plain = build_report(
+            &loaded,
+            None,
+            &ReportOptions {
+                redact: false,
+                ..ReportOptions::default()
+            },
+            "now",
+            &[],
+        );
+        assert!(
+            plain.text.contains("jdoe.smith"),
+            "unredacted only when asked"
+        );
+    }
+
+    #[test]
+    fn saved_build_logs_are_redacted() {
+        let loaded = build_log_with_a_user_path();
+        let prepared = crate::save::prepare(
+            &loaded,
+            &crate::view::Filter::default(),
+            &crate::save::SaveRequest::default(),
+            "now".to_owned(),
+            &[],
+        );
+        let text = prepared.lines.join("\n");
+        assert!(text.contains("C:/Users/<user>/Art/item_0001.png"));
+        assert!(!text.contains("jdoe"));
+        // Redaction keeps the report parseable: the saved build reads the same.
+        assert!(text.contains("Build completed with a result of 'Succeeded'"));
+    }
+
+    #[test]
+    fn a_report_for_an_incremental_build_names_the_last_clean_one() {
+        // Keep only the first (incremental) build of the fixture and a copy of
+        // the clean one before it: the latest build has no sizes.
+        let text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../comte-unity/tests/fixtures/editor_build.log"),
+        )
+        .unwrap()
+        .replace("\r\n", "\n");
+        let split = text.find("BuildPlayer: start building target 13").unwrap();
+        let second = split
+            + 1
+            + text[split + 1..]
+                .find("BuildPlayer: start building target 13")
+                .unwrap();
+        let reordered = format!(
+            "{}{}{}",
+            &text[..split],
+            &text[second..],
+            &text[split..second]
+        );
+        let path =
+            std::env::temp_dir().join(format!("comte-build-order-{}.log", std::process::id()));
+        std::fs::write(&path, reordered).unwrap();
+        let loaded = load(&path, "Editor.log").unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let report = build_report(&loaded, None, &ReportOptions::default(), "now", &[]);
+        assert!(
+            report
+                .text
+                .contains("**Android build · Success · 3 min 04 s**"),
+            "{}",
+            report.text
+        );
+        assert!(report.text.contains("No sizes for this build"));
+        assert!(report.text.contains(
+            "Sizes from the last clean build, Android build · 11/24/2026 11:24:23 PM · Succeeded · 9 min 14 s:"
+        ));
+    }
+
+    #[test]
+    fn build_comparisons_are_redacted() {
+        let before = fixture("editor_build.log");
+        let after = build_log_with_a_user_path();
+        let (a, b) = (
+            &before.doc.build_reports()[1],
+            &after.doc.build_reports()[1],
+        );
+        let text =
+            build_comparison_markdown(("A", a, &before.raw), ("B", b, &after.raw), &[], true);
+        // The renamed asset is gone from one place and new in the other.
+        assert!(
+            text.contains("`C:/Users/<user>/Art/item_0001.png`"),
+            "{text}"
+        );
+        assert!(!text.contains("jdoe"), "{text}");
+        let plain =
+            build_comparison_markdown(("A", a, &before.raw), ("B", b, &after.raw), &[], false);
+        assert!(plain.contains("jdoe.smith"));
     }
 
     #[test]

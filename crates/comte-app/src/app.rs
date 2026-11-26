@@ -21,6 +21,8 @@ use eframe::egui::{
     vec2,
 };
 
+use crate::build_history::{SavedBuild, builds_dir, save_build};
+use crate::build_view::{Against, BuildAction, BuildView, build_ui};
 use crate::cli::{age, human_size};
 use crate::compare_view::{CompareAction, CompareView, compare_ui, previous_run};
 use crate::devtools::DevHooks;
@@ -89,6 +91,10 @@ pub struct ComteApp {
     settings_open: bool,
     /// The comparison report, when comparing the open log (B) with another (A).
     compare: Option<CompareView>,
+    /// The build view, when looking at a player build of the open log.
+    build_view: Option<BuildView>,
+    /// Saved builds (DESIGN §5.2), newest first; read when the build view opens.
+    build_history: Vec<SavedBuild>,
     report_dialog: Option<ReportDialog>,
     pack_dialog: Option<PackDialog>,
     /// Editors found on this machine; detected on first use.
@@ -202,6 +208,8 @@ impl ComteApp {
             settings,
             settings_open: dev.settings_open,
             compare: None,
+            build_view: None,
+            build_history: Vec::new(),
             report_dialog: None,
             pack_dialog: None,
             ides: None,
@@ -341,6 +349,7 @@ impl ComteApp {
                     self.pins.clear(&loaded.path);
                     self.collapsed = default_collapsed(&loaded.doc);
                     self.current = Some(loaded);
+                    self.build_view = None;
                     self.selected = None;
                     self.rows_dirty = true;
                     self.notice = Some((
@@ -647,6 +656,7 @@ impl ComteApp {
                 )));
                 self.collapsed = default_collapsed(&loaded.doc);
                 self.current = Some(loaded);
+                self.build_view = None;
                 self.selected = None;
                 self.rows_dirty = true;
                 self.load_error = None;
@@ -699,6 +709,20 @@ impl ComteApp {
                 }
                 if self.dev.compare && self.compare.is_none() {
                     self.start_compare(ctx);
+                }
+                if let Some(how) = self.dev.build.clone()
+                    && let Some(count) = self.current.as_ref().map(|c| c.doc.build_reports().len())
+                    && count > 0
+                {
+                    self.build_history = crate::build_history::discover(&self.builds_dir());
+                    let current = self.current.as_ref().expect("a log with builds");
+                    let mut view = BuildView::new(count - 1, current, &self.build_history);
+                    view.grouping = match how.as_str() {
+                        "type" => crate::build_view::Grouping::ByType,
+                        "folder" => crate::build_view::Grouping::ByFolder,
+                        _ => crate::build_view::Grouping::Assets,
+                    };
+                    self.build_view = Some(view);
                 }
                 let is_editor_log = self.current.as_ref().is_some_and(|c| {
                     c.session.is_none() && c.path.file_name().is_some_and(|n| n == "Editor.log")
@@ -1295,6 +1319,7 @@ impl ComteApp {
         });
         if let Some(path) = a {
             let title = file_title(&path);
+            self.build_view = None;
             self.compare = Some(CompareView::start(path, title, ctx));
         }
     }
@@ -1347,6 +1372,7 @@ impl ComteApp {
         )));
         self.collapsed = default_collapsed(&loaded.doc);
         self.current = Some(loaded);
+        self.build_view = None;
         self.selected = None;
         self.rows_dirty = true;
     }
@@ -1481,12 +1507,84 @@ impl ComteApp {
         }
     }
 
+    /// `…\ComteLogAnalyzer\builds`, beside the sessions folder.
+    fn builds_dir(&self) -> PathBuf {
+        builds_dir(&self.sessions_dir())
+    }
+
+    /// Copies the comparison of build `after` of the open log with `before`,
+    /// as redacted Markdown.
+    fn copy_build_comparison(&mut self, ctx: &egui::Context, before: Against, after: usize) {
+        let Some(current) = &self.current else {
+            return;
+        };
+        let builds = current.doc.build_reports();
+        let Some(after_build) = builds.get(after) else {
+            return;
+        };
+        let (before_label, before_build, before_raw): (
+            String,
+            &comte_core::BuildReport,
+            Vec<String>,
+        ) = match &before {
+            Against::InLog(i) => match builds.get(*i) {
+                Some(b) => (format!("{} (this log)", b.label()), b, Vec::new()),
+                None => return,
+            },
+            Against::Saved(path) => match self.build_history.iter().find(|s| &s.path == path) {
+                // Saved builds were redacted when saved: the open log's
+                // lines are enough to learn names from.
+                Some(s) => (s.label(), &s.build, Vec::new()),
+                None => return,
+            },
+        };
+        let names = self.extra_names();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let text = crate::report_export::build_comparison_markdown(
+            (&before_label, before_build, &before_raw),
+            (&after_build.label(), after_build, &current.raw),
+            &names,
+            true,
+        );
+        ctx.copy_text(text);
+        self.notice = Some((
+            "Copied the comparison (redacted) as Markdown".to_owned(),
+            Instant::now(),
+        ));
+    }
+
+    /// Saves build `index` of the open log to the build history (redacted).
+    fn save_build(&mut self, index: usize, note: &str) {
+        let Some(current) = &self.current else {
+            return;
+        };
+        let names = self.extra_names();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let dir = self.builds_dir();
+        match save_build(current, index, &dir, note, &names, &chrono::Local::now()) {
+            Ok(path) => {
+                self.notice = Some((
+                    format!(
+                        "Saved the build to the history: {}",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    ),
+                    Instant::now(),
+                ));
+                self.build_history = crate::build_history::discover(&dir);
+            }
+            Err(e) => {
+                self.notice = Some((format!("Could not save the build: {e}"), Instant::now()));
+            }
+        }
+    }
+
     /// Closes the open log (after its file was deleted).
     fn close_current(&mut self) {
         self.stop_live();
         self.current = None;
         self.current_deleted = false;
         self.compare = None;
+        self.build_view = None;
         self.selected = None;
         self.rows_dirty = true;
     }
@@ -1906,6 +2004,8 @@ impl ComteApp {
         } else if escape && !typing {
             if self.compare.is_some() {
                 self.compare = None;
+            } else if self.build_view.is_some() {
+                self.build_view = None;
             } else {
                 self.select(None);
             }
@@ -2867,6 +2967,13 @@ impl ComteApp {
             Some(Jump::Section(id)) => self.reveal_section(id),
             Some(Jump::CopySummary) => self.copy_summary(ui.ctx()),
             Some(Jump::OpenCompanion(i)) => self.open_companion(i, ui.ctx()),
+            Some(Jump::OpenBuild(index)) => {
+                self.compare = None;
+                self.build_history = crate::build_history::discover(&self.builds_dir());
+                if let Some(current) = &self.current {
+                    self.build_view = Some(BuildView::new(index, current, &self.build_history));
+                }
+            }
             Some(Jump::RevealLog) => {
                 if let Some(path) = self.current.as_ref().map(|c| c.path.clone()) {
                     self.show_in_folder(&path);
@@ -2943,6 +3050,7 @@ impl eframe::App for ComteApp {
                 self.details_panel(ui);
             });
         let mut compare_action = None;
+        let mut build_action = None;
         if let (Some(compare), Some(current)) = (&mut self.compare, &self.current) {
             compare.update(current);
             egui::CentralPanel::default_margins().show(ui, |ui| {
@@ -2951,6 +3059,10 @@ impl eframe::App for ComteApp {
             if compare.loading() || compare.result.is_none() {
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
             }
+        } else if let (Some(view), Some(current)) = (&mut self.build_view, &self.current) {
+            egui::CentralPanel::default_margins().show(ui, |ui| {
+                build_action = build_ui(ui, view, current, &self.build_history);
+            });
         } else {
             egui::CentralPanel::default_margins().show(ui, |ui| {
                 if self.current_deleted {
@@ -2966,6 +3078,38 @@ impl eframe::App for ComteApp {
         }
         if let Some(action) = compare_action {
             self.on_compare_action(action, &ctx);
+        }
+        match build_action {
+            Some(BuildAction::Close) => self.build_view = None,
+            Some(BuildAction::Save { index, note }) => self.save_build(index, &note),
+            Some(BuildAction::CopyMarkdown { before, after }) => {
+                self.copy_build_comparison(&ctx, before, after)
+            }
+            Some(BuildAction::OpenSaved(path)) => {
+                self.build_view = None;
+                let title = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.open(path, title, &ctx);
+            }
+            Some(BuildAction::OpenHistoryFolder) => {
+                let dir = self.builds_dir();
+                let _ = std::fs::create_dir_all(&dir);
+                self.open_path(&dir.display().to_string());
+            }
+            Some(BuildAction::ShowInLog(line)) => {
+                self.build_view = None;
+                let entry = self
+                    .current
+                    .as_ref()
+                    .and_then(|c| c.doc.entry_at_line(line))
+                    .map(|e| e.id);
+                if let Some(id) = entry {
+                    self.reveal(id);
+                }
+            }
+            None => {}
         }
 
         if self.filter != filter_before || self.rows_dirty {

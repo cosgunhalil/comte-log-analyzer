@@ -24,6 +24,10 @@ pub enum ContentChoice {
     /// Only the lines of entries matching the current filter (duplicates
     /// included, even when collapsed in the list).
     Visible,
+    /// One build (index into `doc.build_reports()`): its lines, plus the
+    /// lines naming the engine version and the project, so the saved file
+    /// reads back as the same build (DESIGN §5.2).
+    Build(usize),
 }
 
 /// What the user typed and chose in the save dialog.
@@ -90,6 +94,27 @@ pub fn visible_line_numbers(loaded: &Loaded, filter: &Filter) -> Vec<usize> {
     numbers
 }
 
+/// The (1-based) numbers of the lines that make up build `index`: the
+/// engine version and project lines, then the build itself.
+pub fn build_line_numbers(loaded: &Loaded, index: usize) -> Vec<usize> {
+    let Some(build) = loaded.doc.build_reports().get(index) else {
+        return Vec::new();
+    };
+    let range = build.line_range();
+    let mut numbers: Vec<usize> = loaded
+        .doc
+        .facts()
+        .iter()
+        .filter(|f| matches!(f.key, FactKey::EngineVersion | FactKey::ProjectPath))
+        .map(|f| f.line)
+        .filter(|&n| n < *range.start())
+        .collect();
+    numbers.sort_unstable();
+    numbers.dedup();
+    numbers.extend(range.filter(|&n| n <= loaded.raw.len()));
+    numbers
+}
+
 /// "errors and warnings, noise hidden, search "save""-style description.
 pub fn describe_filter(filter: &Filter) -> String {
     let severities: Vec<&str> = [
@@ -147,8 +172,11 @@ pub fn prepare(
             loaded.raw.iter().map(String::as_str).collect(),
             request.pins.clone(),
         ),
-        ContentChoice::Visible => {
-            let numbers = visible_line_numbers(loaded, filter);
+        ContentChoice::Visible | ContentChoice::Build(_) => {
+            let numbers = match request.content {
+                ContentChoice::Build(index) => build_line_numbers(loaded, index),
+                _ => visible_line_numbers(loaded, filter),
+            };
             (
                 numbers
                     .iter()
@@ -211,6 +239,15 @@ pub fn prepare(
             )),
             (ContentChoice::Full, None) => SessionContent::Full,
             (ContentChoice::Visible, _) => SessionContent::Filtered(describe_filter(filter)),
+            (ContentChoice::Build(index), _) => SessionContent::Filtered(format!(
+                "build: {}",
+                loaded
+                    .doc
+                    .build_reports()
+                    .get(index)
+                    .map(comte_core::BuildReport::label)
+                    .unwrap_or_default()
+            )),
         },
         redacted: report.as_ref().map(|r| r.total),
         tags: parse_tags(&request.tags),

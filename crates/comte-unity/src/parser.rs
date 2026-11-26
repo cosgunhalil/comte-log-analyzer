@@ -16,10 +16,10 @@
 use std::time::Duration;
 
 use comte_core::{
-    AssetImport, BuildReport, Category, Fact, FactKey, FrameKind, LogEntry, LogParser, Metric,
-    MetricKind, ParseEvent, ReloadPhase, ReloadProfile, SectionKind, SectionStart, Severity,
-    SizeRow, SourceRef, StackFrame, Unfinished, format_bytes, format_duration, parse_size,
-    parse_utc_millis,
+    AssetImport, BuildReport, BuildStep, Category, Fact, FactKey, FrameKind, LogEntry, LogParser,
+    Metric, MetricKind, ParseEvent, ReloadPhase, ReloadProfile, SectionKind, SectionStart,
+    Severity, SizeRow, SourceRef, StackFrame, Unfinished, format_bytes, format_duration,
+    parse_size, parse_utc_millis,
 };
 
 use crate::common::{
@@ -84,6 +84,20 @@ regex!(CRASH_MODULE = r"^\S.*:[^:\\/]+\.(?i:dll|exe) \([0-9A-Fa-f]+\), size: \d+
 regex!(RELOAD_PHASE = r"^(?P<tabs>\t+)(?P<name>[A-Za-z][\w.]*) \((?P<ms>\d+)ms\)$");
 // BepInEx, the common Unity mod loader: `[Info   :   BepInEx] Loading [Better Maps 1.4.2]`.
 regex!(BEPINEX_PLUGIN = r"^\[(?:Info|Message)\s*:\s*BepInEx\] Loading \[(?P<name>[^\]]+)\]");
+// A player build, from its start to its end (Unity 6000.3, interactive and
+// batch mode):
+//   BuildPlayer: start building target 13
+//   … Build Report …
+//   Build Finished, Result: Success.
+//   ##utp:{"type":"PlayerBuildInfo",…,"steps":[{"description":"…","duration":51},…],"duration":551659}
+//   Build completed with a result of 'Succeeded' in 554 seconds (554039 ms) [11/24/2026 11:24:23 PM -> 11/24/2026 11:33:37 PM, 9m 14s]
+regex!(BUILD_START = r"^BuildPlayer: start building target (?P<target>\d+)");
+regex!(BUILD_FINISHED = r"^Build Finished, Result: (?P<result>\w+)");
+regex!(
+    BUILD_COMPLETED = r"^Build completed with a result of '(?P<result>[^']+)' in [\d.]+ seconds \((?P<ms>\d+) ms\)(?: \[(?P<from>.+?) -> (?P<to>.+?),[^\]]*\])?"
+);
+regex!(BUILD_STEP = r#"\{"description":"(?P<name>[^"]*)","duration":(?P<ms>\d+)\}"#);
+regex!(BUILD_TOTAL_MS = r#""duration":(?P<ms>\d+)\}\s*$"#);
 regex!(POSIX_FRAME = r"^\s*#\d+\s+(?:pc\s+)?(?:0x)?[0-9a-fA-F]+\s+(?:in\s+)?(?P<func>.+)$");
 
 /// Which Unity program wrote the log.
@@ -203,8 +217,6 @@ enum Block {
 
 /// Most lines a native crash entry absorbs when the log has no end marker.
 const MAX_CRASH_LINES: usize = 400;
-/// Assets kept from a build report (the list can be thousands long).
-const MAX_BUILD_ASSETS: usize = 200;
 /// A domain reload or compile counts as "where it stopped" only if it
 /// started within this many lines of the end: an editor that got stuck
 /// writes nothing more, while a section the log merely never closed
@@ -324,6 +336,9 @@ pub struct UnityParser {
     /// once the crash report folder (printed after the stack) is known.
     crashes: Vec<(usize, Vec<StackFrame>, CrashStats)>,
     crash_folder: Option<String>,
+    /// The player build being read: started, maybe with its size report,
+    /// not yet ended. Sent once it ends (or when the log does).
+    building: Option<BuildReport>,
     /// Rules already reported (each once per log).
     hinted: Vec<&'static str>,
     /// A licensing failure line, and whether Unity ever connected to the
@@ -356,6 +371,7 @@ impl UnityParser {
             crashes: Vec::new(),
             crash_folder: None,
             hinted: Vec::new(),
+            building: None,
             licensing_problem: None,
             licensing_connected: false,
         }
@@ -492,6 +508,64 @@ impl UnityParser {
         }
         if text.contains(['\0', '\u{FFFD}']) {
             self.garbled.get_or_insert((n, 0)).1 += 1;
+        }
+    }
+
+    /// Follows a player build from its start marker to its end, collecting
+    /// what identifies it: target, result, duration, times and steps.
+    fn scan_build(&mut self, n: usize, text: &str, out: &mut Vec<ParseEvent>) {
+        if let Some(c) = BUILD_START.captures(text) {
+            if let Some(previous) = self.building.take() {
+                out.push(ParseEvent::BuildReport(previous));
+            }
+            self.building = Some(BuildReport {
+                line: n,
+                started_line: Some(n),
+                end_line: n,
+                target: Some(build_target_name(&c["target"])),
+                ..BuildReport::default()
+            });
+        } else if let Some(c) = BUILD_FINISHED.captures(text) {
+            let build = self.building.get_or_insert_with(|| BuildReport {
+                line: n,
+                ..BuildReport::default()
+            });
+            build.result.get_or_insert_with(|| c["result"].to_owned());
+            build.end_line = n;
+        } else if text.starts_with("##utp:") && text.contains("\"type\":\"PlayerBuildInfo\"") {
+            let build = self.building.get_or_insert_with(|| BuildReport {
+                line: n,
+                ..BuildReport::default()
+            });
+            build.end_line = n;
+            build.steps = BUILD_STEP
+                .captures_iter(text)
+                .filter_map(|c| {
+                    Some(BuildStep {
+                        name: c["name"].to_owned(),
+                        duration: Duration::from_millis(c["ms"].parse().ok()?),
+                    })
+                })
+                .collect();
+            if build.duration.is_none() {
+                build.duration = BUILD_TOTAL_MS
+                    .captures(text)
+                    .and_then(|c| c["ms"].parse().ok())
+                    .map(Duration::from_millis);
+            }
+        } else if let Some(c) = BUILD_COMPLETED.captures(text) {
+            let mut build = self.building.take().unwrap_or(BuildReport {
+                line: n,
+                ..BuildReport::default()
+            });
+            build.result = Some(c["result"].to_owned());
+            build.end_line = n;
+            if let Ok(ms) = c["ms"].parse() {
+                build.duration = Some(Duration::from_millis(ms));
+            }
+            build.started_at = c.name("from").map(|m| m.as_str().to_owned());
+            build.finished_at = c.name("to").map(|m| m.as_str().to_owned());
+            out.push(ParseEvent::BuildReport(build));
         }
     }
 
@@ -659,9 +733,19 @@ impl UnityParser {
 
     fn flush(&mut self, out: &mut Vec<ParseEvent>) {
         if let Some(mut p) = self.pending.take() {
-            if let Some(report) = p.build.take() {
+            if let Some(mut report) = p.build.take() {
+                report.line = p.entry.line_range.start;
                 p.entry.message = build_report_message(&report);
-                out.push(ParseEvent::BuildReport(report));
+                // Sent with the rest of the build (target, result, steps)
+                // when the build ends.
+                let build = self.building.get_or_insert_with(BuildReport::default);
+                build.line = report.line;
+                build.end_line = build.end_line.max(p.entry.line_range.end - 1);
+                build.sizes_unavailable = report.sizes_unavailable;
+                build.total = report.total;
+                build.user_assets = report.user_assets;
+                build.categories = report.categories;
+                build.assets = report.assets;
             }
             if let Some(profile) = p.profile.take() {
                 out.push(ParseEvent::ReloadProfile(profile));
@@ -792,12 +876,15 @@ impl UnityParser {
                         });
                     }
                 } else if let Some(c) = BUILD_ASSET.captures(text) {
-                    if report.assets.len() < MAX_BUILD_ASSETS {
-                        report.assets.push(SizeRow {
-                            name: c["path"].trim().to_owned(),
-                            bytes: parse_size(&c["size"]).unwrap_or(0),
-                        });
-                    }
+                    report.assets.push(SizeRow {
+                        name: c["path"].trim().to_owned(),
+                        bytes: parse_size(&c["size"]).unwrap_or(0),
+                    });
+                } else if text.starts_with("Information on used Assets is not available")
+                    || text.starts_with("Do a clean build to view")
+                {
+                    // An incremental build: Unity lists sizes only after a clean one.
+                    report.sizes_unavailable = true;
                 } else if !(text.starts_with("Uncompressed usage by category")
                     || text.starts_with("Used Assets"))
                 {
@@ -1505,6 +1592,7 @@ impl LogParser for UnityParser {
             )));
         }
         self.scan_licensing(line_no, text);
+        self.scan_build(line_no, text, out);
         if self.continue_pending(line_no, text, out) {
             return;
         }
@@ -1513,6 +1601,9 @@ impl LogParser for UnityParser {
 
     fn finish(&mut self, out: &mut Vec<ParseEvent>) {
         self.flush(out);
+        if let Some(build) = self.building.clone() {
+            out.push(ParseEvent::BuildReport(build));
+        }
         self.final_hints(out);
         if let Some(unfinished) = self.unfinished() {
             out.push(ParseEvent::Unfinished(unfinished));
@@ -1562,7 +1653,25 @@ fn phase_about(name: &str) -> (Option<&'static str>, bool) {
 }
 
 /// "Build report: 106.8 MB complete build, largest asset Assets/Big.png (8.0 MB)".
+/// Unity's `BuildTarget` numbers, for the ones whose value is certain.
+/// Others are shown as "target N".
+fn build_target_name(number: &str) -> String {
+    match number {
+        "2" => "macOS".to_owned(),
+        "5" => "Windows (32-bit)".to_owned(),
+        "9" => "iOS".to_owned(),
+        "13" => "Android".to_owned(),
+        "19" => "Windows".to_owned(),
+        "20" => "WebGL".to_owned(),
+        "24" => "Linux".to_owned(),
+        other => format!("target {other}"),
+    }
+}
+
 fn build_report_message(report: &BuildReport) -> String {
+    if report.sizes_unavailable && !report.has_sizes() {
+        return "Build report: no sizes (Unity lists them only after a clean build)".to_owned();
+    }
     let mut message = "Build report".to_owned();
     if let Some(total) = report.total {
         message.push_str(&format!(": {} complete build", format_bytes(total)));

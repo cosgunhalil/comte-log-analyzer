@@ -96,19 +96,97 @@ pub struct SizeRow {
     pub bytes: u64,
 }
 
-/// A build's size report (Unity prints one after each player build).
+/// One player build found in a log: which build it was, how it ended, and its
+/// size report (Unity prints one at the end of each player build).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BuildReport {
-    /// Line the report starts on.
+    /// Line of the size report, or of the build's start when it has none.
     pub line: usize,
+    /// Line the build started on, when the log shows it.
+    pub started_line: Option<usize>,
+    /// Last line that belongs to the build (its result, its timings or the
+    /// end of its size report). Saving a build keeps the lines
+    /// `started_line..=end_line`.
+    pub end_line: usize,
+    /// The platform built for, e.g. "Android".
+    pub target: Option<String>,
+    /// How it ended, as the engine says it ("Succeeded", "Success", "Failed"…).
+    /// `None` when the log ends before the build does.
+    pub result: Option<String>,
+    /// How long the whole build took.
+    pub duration: Option<Duration>,
+    /// When it started and finished, as written in the log (local time).
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    /// The build's steps and how long each took, in order.
+    pub steps: Vec<BuildStep>,
+    /// The report says sizes are not available (an incremental build that
+    /// didn't rebuild player data).
+    pub sizes_unavailable: bool,
     /// "Complete build size".
     pub total: Option<u64>,
     /// "Total User Assets": what the percentages are relative to.
     pub user_assets: Option<u64>,
     /// Uncompressed size per category (Textures, Meshes, …), as listed.
     pub categories: Vec<SizeRow>,
-    /// Assets by uncompressed size, largest first, as listed.
+    /// Every asset by uncompressed size, largest first, as listed.
     pub assets: Vec<SizeRow>,
+}
+
+/// One step of a build and how long it took.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildStep {
+    pub name: String,
+    pub duration: Duration,
+}
+
+impl BuildReport {
+    /// The lines of the build in its log: from its start (or the size
+    /// report) to its last line.
+    pub fn line_range(&self) -> std::ops::RangeInclusive<usize> {
+        let start = self.started_line.unwrap_or(self.line).min(self.line.max(1));
+        start..=self.end_line.max(start)
+    }
+
+    /// Two reports of the same build (saved twice, or the same log opened
+    /// again) have the same identity.
+    pub fn identity(&self) -> String {
+        format!(
+            "{}|{}|{}|{}|{}|{}|{}",
+            self.target.as_deref().unwrap_or(""),
+            self.started_at.as_deref().unwrap_or(""),
+            self.result.as_deref().unwrap_or(""),
+            self.duration.map_or(0, |d| d.as_millis()),
+            self.total.unwrap_or(0),
+            self.user_assets.unwrap_or(0),
+            self.assets.len()
+        )
+    }
+
+    /// The report lists sizes.
+    pub fn has_sizes(&self) -> bool {
+        self.total.is_some() || !self.categories.is_empty() || !self.assets.is_empty()
+    }
+
+    /// "Android build · 11/24/2026 11:24:23 PM · Succeeded · 9 min 14 s":
+    /// which build this is, for pickers and headings.
+    pub fn label(&self) -> String {
+        let mut parts = vec![match &self.target {
+            Some(target) => format!("{target} build"),
+            None => "Build".to_owned(),
+        }];
+        if let Some(at) = &self.started_at {
+            parts.push(at.clone());
+        }
+        parts.push(match &self.result {
+            Some(result) => result.clone(),
+            None => "not finished".to_owned(),
+        });
+        if let Some(d) = self.duration {
+            parts.push(crate::model::format_duration(d));
+        }
+        parts.join(" · ")
+    }
 }
 
 /// `12.3 mb`, `512.0 kb`, `1.2 gb`, `340 b` → bytes (1 kb = 1024 b).
